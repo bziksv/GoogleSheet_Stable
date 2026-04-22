@@ -1,0 +1,209 @@
+// ==================== exportMSBundlesStructure.gs ====================
+// ОТДЕЛЬНЫЙ СКРИПТ ДЛЯ СОХРАНЕНИЯ СОСТАВОВ КОМПЛЕКТОВ
+
+const MS_BUNDLES_STRUCTURE_SHEET = "MS_Bundles_Structure";
+
+function exportMSBundlesStructure() {
+  const startTime = new Date();
+  // 👇 ДОБАВЛЯЕМ ТАЙМСТАМП ОБНОВЛЕНИЯ
+  const timestamp = Utilities.formatDate(new Date(), "Europe/Moscow", "dd.MM.yyyy HH:mm");
+  Logger.log("▶️ [Bundles Structure] Старт: " + startTime.toLocaleString());
+  
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(MS_BUNDLES_STRUCTURE_SHEET);
+  if (!sheet) sheet = ss.insertSheet(MS_BUNDLES_STRUCTURE_SHEET);
+  else sheet.clearContents();
+  
+  const token = typeof MS_TOKEN !== "undefined" ? MS_TOKEN : PropertiesService.getScriptProperties().getProperty("MS_TOKEN");
+  if (!token) throw new Error("MS_TOKEN не найден!");
+  
+  const headers = { "Authorization": `Bearer ${token}` };
+  const baseUrl = "https://api.moysklad.ru/api/remap/1.2";
+  
+  // ========== 1. ПОЛУЧАЕМ ВСЕ КОМПЛЕКТЫ С СОСТАВОМ ==========
+  Logger.log("🔵 Загрузка комплектов с составом...");
+  
+  const allBundles = [];
+  let offset = 0;
+  const limit = 100;
+  let totalLoaded = 0;
+  
+  while (true) {
+    const elapsed = (new Date() - startTime) / 1000;
+    if (elapsed > 240) {
+      Logger.log(`⚠️ Превышено время (${Math.round(elapsed)} сек). Останавливаем.`);
+      break;
+    }
+    
+    const url = `${baseUrl}/entity/bundle?limit=${limit}&offset=${offset}&filter=archived=false&expand=components,components.assortment`;
+    
+    try {
+      const resp = UrlFetchApp.fetch(url, { method: "get", muteHttpExceptions: true, headers: headers, timeout: 30000 });
+      
+      if (resp.getResponseCode() !== 200) {
+        Logger.log(`❌ Ошибка API: ${resp.getResponseCode()}`);
+        break;
+      }
+      
+      const data = JSON.parse(resp.getContentText());
+      const rows = data.rows || [];
+      if (rows.length === 0) break;
+      
+      for (const bundle of rows) {
+        const bundleCode = String(bundle.code || "").trim();
+        if (!bundleCode) continue;
+        
+        // Собираем состав комплекта
+        const components = [];
+        if (bundle.components && bundle.components.rows) {
+          for (const comp of bundle.components.rows) {
+            if (comp.assortment) {
+              components.push({
+                componentCode: String(comp.assortment.code || "").trim(),
+                componentName: comp.assortment.name || "",
+                quantity: comp.quantity || 1
+              });
+            }
+          }
+        }
+        
+        allBundles.push({
+          bundleCode: bundleCode,
+          bundleName: bundle.name || "",
+          components: components
+        });
+        totalLoaded++;
+      }
+      
+      offset += limit;
+      Logger.log(`📦 Загружено комплектов: ${totalLoaded}`);
+      if (rows.length < limit) break;
+      Utilities.sleep(50);
+      
+    } catch (e) {
+      Logger.log(`❌ Ошибка: ${e.message}`);
+      break;
+    }
+  }
+  
+  Logger.log(`📦 Всего загружено комплектов: ${allBundles.length}`);
+  
+  if (allBundles.length === 0) {
+    sheet.getRange("A1").setValue("Нет комплектов");
+    return;
+  }
+  
+  // ========== 2. ФОРМИРУЕМ ТАБЛИЦУ В ДВУХ ВАРИАНТАХ ==========
+  
+  // Вариант А: Плоская таблица (для удобного VLOOKUP)
+  // Одна строка - один компонент комплекта
+  Logger.log("🔵 Формируем плоскую таблицу...");
+  
+  // 👇 ДОБАВЛЯЕМ КОЛОНКУ "Обновлено" В ЗАГОЛОВКИ
+  const flatOutput = [[
+    "Код комплекта",
+    "Название комплекта",
+    "Код компонента",
+    "Название компонента",
+    "Количество в комплекте",
+    "Обновлено"  // 👈 НОВАЯ КОЛОНКА
+  ]];
+  
+  for (const bundle of allBundles) {
+    if (bundle.components.length === 0) {
+      // Комплект без компонентов (пустой)
+      flatOutput.push([
+        bundle.bundleCode,
+        bundle.bundleName,
+        "",
+        "",
+        "",
+        timestamp  // 👇 ДОБАВЛЯЕМ ТАЙМСТАМП В КАЖДУЮ СТРОКУ
+      ]);
+    } else {
+      for (const comp of bundle.components) {
+        flatOutput.push([
+          bundle.bundleCode,
+          bundle.bundleName,
+          comp.componentCode,
+          comp.componentName,
+          comp.quantity,
+          timestamp  // 👇 ДОБАВЛЯЕМ ТАЙМСТАМП
+        ]);
+      }
+    }
+  }
+  
+  // Вариант Б: Сводная таблица (все компоненты в одной строке)
+  Logger.log("🔵 Формируем сводную таблицу...");
+  
+  // 👇 ДОБАВЛЯЕМ КОЛОНКУ "Обновлено" В ЗАГОЛОВКИ
+  const summaryOutput = [[
+    "Код комплекта",
+    "Название комплекта",
+    "Состав (код:количество)",
+    "Количество компонентов",
+    "Обновлено"  // 👈 НОВАЯ КОЛОНКА
+  ]];
+  
+  for (const bundle of allBundles) {
+    const componentsStr = bundle.components.map(c => `${c.componentCode}:${c.quantity}`).join(", ");
+    summaryOutput.push([
+      bundle.bundleCode,
+      bundle.bundleName,
+      componentsStr,
+      bundle.components.length,
+      timestamp  // 👇 ДОБАВЛЯЕМ ТАЙМСТАМП
+    ]);
+  }
+  
+  // ========== 3. ЗАПИСЫВАЕМ НА ЛИСТ ==========
+  
+  // Очищаем лист
+  sheet.clear();
+  
+  // Записываем заголовки (теперь 6 колонок вместо 5)
+  sheet.getRange(1, 1, 1, flatOutput[0].length).setValues([flatOutput[0]]);
+  sheet.getRange(1, 1, 1, flatOutput[0].length).setFontWeight("bold").setBackground("#f1f3f4");
+  
+  // Записываем плоскую таблицу
+  if (flatOutput.length > 1) {
+    sheet.getRange(2, 1, flatOutput.length - 1, flatOutput[0].length).setValues(flatOutput.slice(1));
+  }
+  
+  // Настройка ширины колонок (добавляем ширину для новой колонки)
+  sheet.setColumnWidth(1, 150); // Код комплекта
+  sheet.setColumnWidth(2, 300); // Название комплекта
+  sheet.setColumnWidth(3, 150); // Код компонента
+  sheet.setColumnWidth(4, 300); // Название компонента
+  sheet.setColumnWidth(5, 80);  // Количество
+  sheet.setColumnWidth(6, 140); // 👈 Обновлено
+  
+  sheet.setFrozenRows(1);
+  
+  // ========== 4. ЗАПИСЫВАЕМ СВОДНУЮ ТАБЛИЦУ НА ОТДЕЛЬНЫЙ ЛИСТ ==========
+  const summarySheet = ss.getSheetByName(MS_BUNDLES_STRUCTURE_SHEET + "_summary");
+  let summarySheetObj = summarySheet;
+  if (!summarySheetObj) summarySheetObj = ss.insertSheet(MS_BUNDLES_STRUCTURE_SHEET + "_summary");
+  else summarySheetObj.clearContents();
+  
+  summarySheetObj.getRange(1, 1, 1, summaryOutput[0].length).setValues([summaryOutput[0]]);
+  summarySheetObj.getRange(1, 1, 1, summaryOutput[0].length).setFontWeight("bold").setBackground("#f1f3f4");
+  
+  if (summaryOutput.length > 1) {
+    summarySheetObj.getRange(2, 1, summaryOutput.length - 1, summaryOutput[0].length).setValues(summaryOutput.slice(1));
+  }
+  
+  summarySheetObj.setColumnWidth(1, 150);
+  summarySheetObj.setColumnWidth(2, 300);
+  summarySheetObj.setColumnWidth(3, 400);
+  summarySheetObj.setColumnWidth(4, 100);
+  summarySheetObj.setColumnWidth(5, 140); // 👈 Обновлено
+  summarySheetObj.setFrozenRows(1);
+  
+  const elapsed = (new Date() - startTime) / 1000;
+  Logger.log(`✅ [Bundles Structure] Готово!`);
+  Logger.log(`   - Комплектов: ${allBundles.length}`);
+  Logger.log(`   - Строк в плоской таблице: ${flatOutput.length - 1}`);
+  Logger.log(`   - За ${Math.round(elapsed)} сек.`);
+}
