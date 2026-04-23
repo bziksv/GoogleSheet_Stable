@@ -1,53 +1,93 @@
 /**
- * Автоматическая разбивка габаритов и подсветка пустых полей
- * Срабатывает при редактировании колонок G-L листа "Габариты"
+ * Авторазбивка габаритов + подсветка
+ * Поиск колонок по части названия (устойчиво к переносам и пробелам)
  */
 function onEdit(e) {
   try {
     const CONFIG = {
       SHEET_NAME: "Габариты",
-      MIN_COL: 7,             // Колонка G
-      MAX_COL: 12,            // Колонка L
-      COLS: {
-        INPUT: 7,             // G - ввод
-        LENGTH: 8,            // H - длина
-        WIDTH: 9,             // I - ширина
-        BOX_HEIGHT: 10,       // J - высота коробки
-        PACK_HEIGHT: 11,      // K - высота пакета
-        WEIGHT: 12            // L - вес
-      },
+      HEADERS_ROW: 1,
       HIGHLIGHT_COLOR: "#fff59d",
       SPECIAL_VALUES: ["Стандартная упаковка", "Своя упаковка"],
       COURIER_KEYWORD: "курьерский пакет",
-      DIM_REGEX: /(\d+(?:[.,]\d+)?)\s*[xх×*]\s*(\d+(?:[.,]\d+)?)(?:\s*[xх×*]\s*(\d+(?:[.,]\d+)?))?/i
+      DIM_REGEX: /(\d+(?:[.,]\d+)?)\s*[xх×*]\s*(\d+(?:[.,]\d+)?)(?:\s*[xх×*]\s*(\d+(?:[.,]\d+)?))?/i,
+
+      // 🔥 используем КЛЮЧЕВЫЕ ЧАСТИ, а не полные названия
+      HEADERS: {
+        INPUT: "!тип упаковки",
+        LENGTH: "!длина (см)",
+        WIDTH: "!ширина (см)",
+        BOX_HEIGHT: "высота (см) коробка",
+        PACK_HEIGHT: "высота (см) пакет",
+        WEIGHT: "!вес (кг)"
+      }
     };
 
     const sheet = e.range.getSheet();
     if (sheet.getName() !== CONFIG.SHEET_NAME) return;
-    
-    const col = e.range.getColumn();
-    // Реагируем на изменения в колонках G-L (7-12)
-    if (col < CONFIG.MIN_COL || col > CONFIG.MAX_COL) return;
-    
+
     const row = e.range.getRow();
-    
-    // Получаем значение из колонки G
-    const inputRange = sheet.getRange(row, CONFIG.COLS.INPUT);
-    const rawValue = inputRange.getDisplayValue().trim();
-    
-    // Кэшируем диапазоны
+    if (row === CONFIG.HEADERS_ROW) return;
+
+    // === нормализация текста ===
+    function normalize(str) {
+      return str
+        .toString()
+        .toLowerCase()
+        .replace(/\n/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    // === получаем заголовки ===
+    const headers = sheet
+      .getRange(CONFIG.HEADERS_ROW, 1, 1, sheet.getLastColumn())
+      .getValues()[0];
+
+    const colMap = {};
+
+    Object.entries(CONFIG.HEADERS).forEach(([key, name]) => {
+      const target = normalize(name);
+
+      headers.forEach((h, i) => {
+        const header = normalize(h);
+
+        if (header.includes(target)) {
+          colMap[key] = i + 1;
+        }
+      });
+    });
+
+    // если нет ключевой колонки — выходим
+    if (!colMap.INPUT) return;
+
+    const editedCol = e.range.getColumn();
+
+    // реагируем только на наши колонки
+    const watchedCols = Object.values(colMap);
+    if (!watchedCols.includes(editedCol)) return;
+
+    // === диапазоны ===
     const ranges = {
-      input: inputRange,
-      length: sheet.getRange(row, CONFIG.COLS.LENGTH),
-      width: sheet.getRange(row, CONFIG.COLS.WIDTH),
-      boxHeight: sheet.getRange(row, CONFIG.COLS.BOX_HEIGHT),
-      packHeight: sheet.getRange(row, CONFIG.COLS.PACK_HEIGHT),
-      weight: sheet.getRange(row, CONFIG.COLS.WEIGHT)
+      input: sheet.getRange(row, colMap.INPUT),
+      length: sheet.getRange(row, colMap.LENGTH),
+      width: sheet.getRange(row, colMap.WIDTH),
+      boxHeight: sheet.getRange(row, colMap.BOX_HEIGHT),
+      packHeight: sheet.getRange(row, colMap.PACK_HEIGHT),
+      weight: sheet.getRange(row, colMap.WEIGHT)
     };
-    
-    const dimRanges = [ranges.length, ranges.width, ranges.boxHeight, ranges.packHeight, ranges.weight];
-    
-    // === ЕСЛИ КОЛОНКА G ПУСТАЯ - ОЧИЩАЕМ ВСЁ ===
+
+    const dimRanges = [
+      ranges.length,
+      ranges.width,
+      ranges.boxHeight,
+      ranges.packHeight,
+      ranges.weight
+    ];
+
+    const rawValue = ranges.input.getDisplayValue().trim();
+
+    // === если пусто — очищаем всё ===
     if (!rawValue) {
       dimRanges.forEach(c => {
         c.clearContent();
@@ -55,28 +95,28 @@ function onEdit(e) {
       });
       return;
     }
-    
-    // === ЕСЛИ ИЗМЕНИЛИ НЕ G, А ДРУГУЮ ЯЧЕЙКУ - просто обновляем подсветку ===
-    if (col !== CONFIG.COLS.INPUT) {
-      updateHighlights(ranges, rawValue);
+
+    // === если редактировали НЕ поле ввода ===
+    if (editedCol !== colMap.INPUT) {
+      updateHighlights(ranges, rawValue, CONFIG);
       return;
     }
-    
-    // === СБРОС ПОДСВЕТКИ ===
+
+    // === сброс подсветки ===
     dimRanges.forEach(c => c.setBackground(null));
-    
-    // === ОПРЕДЕЛЕНИЕ ТИПА УПАКОВКИ ===
+
     const isCourier = rawValue.toLowerCase().includes(CONFIG.COURIER_KEYWORD);
     const isSpecial = CONFIG.SPECIAL_VALUES.includes(rawValue);
-    
-    // === РАЗБИВКА ГАБАРИТОВ ===
+
     const match = rawValue.match(CONFIG.DIM_REGEX);
-    
+
+    // === разбивка ===
     if (match) {
       ranges.length.setValue(match[1]);
       ranges.width.setValue(match[2]);
-      
+
       const thirdDim = match[3] || "";
+
       if (isCourier) {
         ranges.packHeight.setValue(thirdDim);
         ranges.boxHeight.clearContent();
@@ -85,52 +125,46 @@ function onEdit(e) {
         ranges.packHeight.clearContent();
       }
     } else {
-      [ranges.length, ranges.width, ranges.boxHeight, ranges.packHeight].forEach(c => c.clearContent());
+      [ranges.length, ranges.width, ranges.boxHeight, ranges.packHeight]
+        .forEach(c => c.clearContent());
     }
-    
-    // === ПОДСВЕТКА ===
-    updateHighlights(ranges, rawValue);
-    
+
+    updateHighlights(ranges, rawValue, CONFIG);
+
   } catch (err) {
     console.error("❌ Ошибка в onEdit:", err);
   }
 }
 
+
 /**
- * Обновляет подсветку ячеек на основе их заполненности
+ * Подсветка пустых полей
  */
-function updateHighlights(ranges, rawValue) {
-  const CONFIG = {
-    HIGHLIGHT_COLOR: "#fff59d",
-    SPECIAL_VALUES: ["Стандартная упаковка", "Своя упаковка"],
-    COURIER_KEYWORD: "курьерский пакет"
-  };
-  
+function updateHighlights(ranges, rawValue, CONFIG) {
+
   const isCourier = rawValue.toLowerCase().includes(CONFIG.COURIER_KEYWORD);
   const isSpecial = CONFIG.SPECIAL_VALUES.includes(rawValue);
-  
-  // Сбрасываем всю подсветку
+
+  // сброс подсветки
   [ranges.length, ranges.width, ranges.boxHeight, ranges.packHeight, ranges.weight]
     .forEach(c => c.setBackground(null));
-  
+
   if (isSpecial) {
-    // Для спец. значений подсвечиваем H, I, J, L если пустые
     [ranges.length, ranges.width, ranges.boxHeight, ranges.weight].forEach(c => {
       if (!c.getValue()) c.setBackground(CONFIG.HIGHLIGHT_COLOR);
     });
   } else {
-    // Длина и ширина всегда
     if (!ranges.length.getValue()) ranges.length.setBackground(CONFIG.HIGHLIGHT_COLOR);
     if (!ranges.width.getValue()) ranges.width.setBackground(CONFIG.HIGHLIGHT_COLOR);
-    
-    // Высота в зависимости от типа
+
     if (isCourier) {
       if (!ranges.packHeight.getValue()) ranges.packHeight.setBackground(CONFIG.HIGHLIGHT_COLOR);
     } else {
       if (!ranges.boxHeight.getValue()) ranges.boxHeight.setBackground(CONFIG.HIGHLIGHT_COLOR);
     }
   }
-  
-  // Вес всегда
-  if (!ranges.weight.getValue()) ranges.weight.setBackground(CONFIG.HIGHLIGHT_COLOR);
+
+  if (!ranges.weight.getValue()) {
+    ranges.weight.setBackground(CONFIG.HIGHLIGHT_COLOR);
+  }
 }
