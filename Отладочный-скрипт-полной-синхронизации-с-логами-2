@@ -1,0 +1,31 @@
+// ==================== ПОЛНАЯ СИНХРОНИЗАЦИЯ Без уведомлений в чат====================
+function ZapuskPolnoYSinchronizacii_2() {
+  Logger.log("🚀 СТАРТ ПОЛНОЙ СИНХРОНИЗАЦИИ ЭТАП-2");
+  
+  try {
+
+    Logger.log("🚀 Шаг 7: syncYMDirect()");
+    syncYMDirect();
+    
+    Logger.log("🚀 Шаг 8: syncSTUbyMatch()");
+    syncSTUbyMatch();
+    
+    Logger.log("🚀 Шаг 9: syncVWXbyMatch()");
+    syncVWXbyMatch();
+    
+    Logger.log("🚀 Шаг 10: highlightVATMismatch()");
+    highlightVATMismatch();
+    
+    Logger.log("🚀 Шаг 11: highlightDimensionMismatch()");
+    highlightDimensionMismatch();
+    
+    Logger.log("🚀 Шаг 12: setColumnWidths()");
+    setColumnWidths();
+    
+    Logger.log("✅ ПОЛНАЯ СИНХРОНИЗАЦИЯ ЭТАП 2 ЗАВЕРШЕНА УСПЕШНО");
+    
+  } catch(e) {
+    Logger.log("❌ ОШИБКА: " + e.message);
+    Logger.log("❌ Стек: " + e.stack);
+  }
+}
