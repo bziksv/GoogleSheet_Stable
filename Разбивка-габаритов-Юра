@@ -1,0 +1,136 @@
+/**
+ * Автоматическая разбивка габаритов и подсветка пустых полей
+ * Срабатывает при редактировании колонок G-L листа "Габариты"
+ */
+function onEdit(e) {
+  try {
+    const CONFIG = {
+      SHEET_NAME: "Габариты",
+      MIN_COL: 7,             // Колонка G
+      MAX_COL: 12,            // Колонка L
+      COLS: {
+        INPUT: 7,             // G - ввод
+        LENGTH: 8,            // H - длина
+        WIDTH: 9,             // I - ширина
+        BOX_HEIGHT: 10,       // J - высота коробки
+        PACK_HEIGHT: 11,      // K - высота пакета
+        WEIGHT: 12            // L - вес
+      },
+      HIGHLIGHT_COLOR: "#fff59d",
+      SPECIAL_VALUES: ["Стандартная упаковка", "Своя упаковка"],
+      COURIER_KEYWORD: "курьерский пакет",
+      DIM_REGEX: /(\d+(?:[.,]\d+)?)\s*[xх×*]\s*(\d+(?:[.,]\d+)?)(?:\s*[xх×*]\s*(\d+(?:[.,]\d+)?))?/i
+    };
+
+    const sheet = e.range.getSheet();
+    if (sheet.getName() !== CONFIG.SHEET_NAME) return;
+    
+    const col = e.range.getColumn();
+    // Реагируем на изменения в колонках G-L (7-12)
+    if (col < CONFIG.MIN_COL || col > CONFIG.MAX_COL) return;
+    
+    const row = e.range.getRow();
+    
+    // Получаем значение из колонки G
+    const inputRange = sheet.getRange(row, CONFIG.COLS.INPUT);
+    const rawValue = inputRange.getDisplayValue().trim();
+    
+    // Кэшируем диапазоны
+    const ranges = {
+      input: inputRange,
+      length: sheet.getRange(row, CONFIG.COLS.LENGTH),
+      width: sheet.getRange(row, CONFIG.COLS.WIDTH),
+      boxHeight: sheet.getRange(row, CONFIG.COLS.BOX_HEIGHT),
+      packHeight: sheet.getRange(row, CONFIG.COLS.PACK_HEIGHT),
+      weight: sheet.getRange(row, CONFIG.COLS.WEIGHT)
+    };
+    
+    const dimRanges = [ranges.length, ranges.width, ranges.boxHeight, ranges.packHeight, ranges.weight];
+    
+    // === ЕСЛИ КОЛОНКА G ПУСТАЯ - ОЧИЩАЕМ ВСЁ ===
+    if (!rawValue) {
+      dimRanges.forEach(c => {
+        c.clearContent();
+        c.setBackground(null);
+      });
+      return;
+    }
+    
+    // === ЕСЛИ ИЗМЕНИЛИ НЕ G, А ДРУГУЮ ЯЧЕЙКУ - просто обновляем подсветку ===
+    if (col !== CONFIG.COLS.INPUT) {
+      updateHighlights(ranges, rawValue);
+      return;
+    }
+    
+    // === СБРОС ПОДСВЕТКИ ===
+    dimRanges.forEach(c => c.setBackground(null));
+    
+    // === ОПРЕДЕЛЕНИЕ ТИПА УПАКОВКИ ===
+    const isCourier = rawValue.toLowerCase().includes(CONFIG.COURIER_KEYWORD);
+    const isSpecial = CONFIG.SPECIAL_VALUES.includes(rawValue);
+    
+    // === РАЗБИВКА ГАБАРИТОВ ===
+    const match = rawValue.match(CONFIG.DIM_REGEX);
+    
+    if (match) {
+      ranges.length.setValue(match[1]);
+      ranges.width.setValue(match[2]);
+      
+      const thirdDim = match[3] || "";
+      if (isCourier) {
+        ranges.packHeight.setValue(thirdDim);
+        ranges.boxHeight.clearContent();
+      } else {
+        ranges.boxHeight.setValue(thirdDim);
+        ranges.packHeight.clearContent();
+      }
+    } else {
+      [ranges.length, ranges.width, ranges.boxHeight, ranges.packHeight].forEach(c => c.clearContent());
+    }
+    
+    // === ПОДСВЕТКА ===
+    updateHighlights(ranges, rawValue);
+    
+  } catch (err) {
+    console.error("❌ Ошибка в onEdit:", err);
+  }
+}
+
+/**
+ * Обновляет подсветку ячеек на основе их заполненности
+ */
+function updateHighlights(ranges, rawValue) {
+  const CONFIG = {
+    HIGHLIGHT_COLOR: "#fff59d",
+    SPECIAL_VALUES: ["Стандартная упаковка", "Своя упаковка"],
+    COURIER_KEYWORD: "курьерский пакет"
+  };
+  
+  const isCourier = rawValue.toLowerCase().includes(CONFIG.COURIER_KEYWORD);
+  const isSpecial = CONFIG.SPECIAL_VALUES.includes(rawValue);
+  
+  // Сбрасываем всю подсветку
+  [ranges.length, ranges.width, ranges.boxHeight, ranges.packHeight, ranges.weight]
+    .forEach(c => c.setBackground(null));
+  
+  if (isSpecial) {
+    // Для спец. значений подсвечиваем H, I, J, L если пустые
+    [ranges.length, ranges.width, ranges.boxHeight, ranges.weight].forEach(c => {
+      if (!c.getValue()) c.setBackground(CONFIG.HIGHLIGHT_COLOR);
+    });
+  } else {
+    // Длина и ширина всегда
+    if (!ranges.length.getValue()) ranges.length.setBackground(CONFIG.HIGHLIGHT_COLOR);
+    if (!ranges.width.getValue()) ranges.width.setBackground(CONFIG.HIGHLIGHT_COLOR);
+    
+    // Высота в зависимости от типа
+    if (isCourier) {
+      if (!ranges.packHeight.getValue()) ranges.packHeight.setBackground(CONFIG.HIGHLIGHT_COLOR);
+    } else {
+      if (!ranges.boxHeight.getValue()) ranges.boxHeight.setBackground(CONFIG.HIGHLIGHT_COLOR);
+    }
+  }
+  
+  // Вес всегда
+  if (!ranges.weight.getValue()) ranges.weight.setBackground(CONFIG.HIGHLIGHT_COLOR);
+}
