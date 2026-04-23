@@ -1,4 +1,4 @@
-// updateMSStocks.gs
+// moysklad-остатки-товары.gs
 // ⚠️ MS_TOKEN берётся из config_ms.gs или Свойств скрипта
 
 function updateMSStocks() {
