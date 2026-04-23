@@ -1,0 +1,162 @@
+function syncSTUbyMatch() {
+  var startTime = new Date();
+  Logger.log("▶️ Старт: " + startTime.toLocaleString());
+  
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Файл для работы");
+  if (!sheet) { Logger.log("❌ Лист не найден"); return; }
+  
+  // ========== 1. НАХОДИМ КОЛОНКИ ПО НАЗВАНИЯМ ==========
+  var headerRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  
+  var colS = null; // Huckster_Ozon
+  var colT = null; // Huckster_WB
+  var colU = null; // Huckster_YM
+  
+  for (var i = 0; i < headerRow.length; i++) {
+    var header = headerRow[i] ? headerRow[i].toString() : "";
+    if (header === "Huckster_Ozon") {
+      colS = i + 1;
+      Logger.log("📍 Найдена колонка 'Huckster_Ozon' → " + colS);
+    } else if (header === "Huckster_WB") {
+      colT = i + 1;
+      Logger.log("📍 Найдена колонка 'Huckster_WB' → " + colT);
+    } else if (header === "Huckster_YM") {
+      colU = i + 1;
+      Logger.log("📍 Найдена колонка 'Huckster_YM' → " + colU);
+    }
+  }
+  
+  if (!colS || !colT || !colU) {
+    Logger.log("❌ Не найдены все колонки Huckster!");
+    return;
+  }
+  
+  var lastRow = sheet.getLastRow();
+  var startRow = 2;
+  if (lastRow < startRow) { Logger.log("⚠️ Нет данных"); return; }
+  
+  var dataRows = lastRow - startRow + 1;
+  
+  // Читаем данные
+  var aVals = sheet.getRange(startRow, 1, dataRows, 1).getValues();
+  var sVals = sheet.getRange(startRow, colS, dataRows, 1).getValues();
+  var tVals = sheet.getRange(startRow, colT, dataRows, 1).getValues();
+  var uVals = sheet.getRange(startRow, colU, dataRows, 1).getValues();
+  
+  // Строим карту "значение из A -> индекс строки"
+  var targetRowMap = new Map();
+  for (var i = 0; i < dataRows; i++) {
+    var aVal = aVals[i][0];
+    var aStr = (aVal !== "" && aVal !== null) ? String(aVal).trim() : "";
+    if (aStr !== "") {
+      targetRowMap.set(aStr, i);
+    }
+  }
+  Logger.log("🗺️ Карта целевых строк: " + targetRowMap.size);
+  
+  // Массивы для новых значений (копируем, а не перемещаем)
+  var newS = new Array(dataRows);
+  var newT = new Array(dataRows);
+  var newU = new Array(dataRows);
+  var bgS = new Array(dataRows);
+  var bgT = new Array(dataRows);
+  var bgU = new Array(dataRows);
+  
+  // Инициализируем пустыми значениями
+  for (var i = 0; i < dataRows; i++) {
+    newS[i] = "";
+    newT[i] = "";
+    newU[i] = "";
+    bgS[i] = null;
+    bgT[i] = null;
+    bgU[i] = null;
+  }
+  
+  // Копируем значения из источника в целевые строки (НЕ УДАЛЯЕМ ИЗ ИСТОЧНИКА)
+  var movedS = 0, movedT = 0, movedU = 0;
+  
+  // Huckster_Ozon
+  for (var i = 0; i < dataRows; i++) {
+    var val = sVals[i][0];
+    var valStr = (val !== "" && val !== null) ? String(val).trim() : "";
+    if (valStr === "") continue;
+    
+    var targetIdx = targetRowMap.get(valStr);
+    if (targetIdx !== undefined) {
+      if (newS[targetIdx] === "") {
+        newS[targetIdx] = val;
+        movedS++;
+        Logger.log("Huckster_Ozon: значение '" + valStr + "' → в строку " + (startRow + targetIdx));
+      }
+    }
+  }
+  
+  // Huckster_WB
+  for (var i = 0; i < dataRows; i++) {
+    var val = tVals[i][0];
+    var valStr = (val !== "" && val !== null) ? String(val).trim() : "";
+    if (valStr === "") continue;
+    
+    var targetIdx = targetRowMap.get(valStr);
+    if (targetIdx !== undefined) {
+      if (newT[targetIdx] === "") {
+        newT[targetIdx] = val;
+        movedT++;
+        Logger.log("Huckster_WB: значение '" + valStr + "' → в строку " + (startRow + targetIdx));
+      }
+    }
+  }
+  
+  // Huckster_YM
+  for (var i = 0; i < dataRows; i++) {
+    var val = uVals[i][0];
+    var valStr = (val !== "" && val !== null) ? String(val).trim() : "";
+    if (valStr === "") continue;
+    
+    var targetIdx = targetRowMap.get(valStr);
+    if (targetIdx !== undefined) {
+      if (newU[targetIdx] === "") {
+        newU[targetIdx] = val;
+        movedU++;
+        Logger.log("Huckster_YM: значение '" + valStr + "' → в строку " + (startRow + targetIdx));
+      }
+    }
+  }
+  
+  // Определяем фоны (закрашиваем пустые ячейки, но не если все три пустые)
+  for (var i = 0; i < dataRows; i++) {
+    var hasS = (newS[i] !== "" && newS[i] !== null);
+    var hasT = (newT[i] !== "" && newT[i] !== null);
+    var hasU = (newU[i] !== "" && newU[i] !== null);
+    
+    if (!hasS && !hasT && !hasU) {
+      bgS[i] = null;
+      bgT[i] = null;
+      bgU[i] = null;
+    } else {
+      if (!hasS) bgS[i] = "#ffff00";
+      if (!hasT) bgT[i] = "#ffff00";
+      if (!hasU) bgU[i] = "#ffff00";
+    }
+  }
+  
+  // Записываем данные
+  var sOutput = [], tOutput = [], uOutput = [];
+  var sBgOutput = [], tBgOutput = [], uBgOutput = [];
+  
+  for (var i = 0; i < dataRows; i++) {
+    sOutput.push([newS[i]]);
+    tOutput.push([newT[i]]);
+    uOutput.push([newU[i]]);
+    sBgOutput.push([bgS[i]]);
+    tBgOutput.push([bgT[i]]);
+    uBgOutput.push([bgU[i]]);
+  }
+  
+  sheet.getRange(startRow, colS, dataRows, 1).setValues(sOutput).setBackgrounds(sBgOutput);
+  sheet.getRange(startRow, colT, dataRows, 1).setValues(tOutput).setBackgrounds(tBgOutput);
+  sheet.getRange(startRow, colU, dataRows, 1).setValues(uOutput).setBackgrounds(uBgOutput);
+  
+  Logger.log("📊 ИТОГО: S:" + movedS + " T:" + movedT + " U:" + movedU);
+  Logger.log("🎉 Готово за " + ((new Date() - startTime) / 1000).toFixed(2) + " сек.");
+}
