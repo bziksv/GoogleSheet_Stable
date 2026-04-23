@@ -1,6 +1,6 @@
-function copyColumnsFromHucksterAdvanced() {
+function copyFrom_Huckster_Export_RRC() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sourceSheet = ss.getSheetByName("Huckster Export");
+  var sourceSheet = ss.getSheetByName("Huckster Export RRC");
   var targetSheet = ss.getSheetByName("Файл для работы");
   
   if (!sourceSheet || !targetSheet) {
@@ -8,71 +8,68 @@ function copyColumnsFromHucksterAdvanced() {
     return;
   }
   
+  var lastRow = sourceSheet.getLastRow();
+  if (lastRow === 0) {
+    console.log('Лист "Huckster Export RRC" пуст!');
+    return;
+  }
+  
   // ========== 1. НАХОДИМ НУЖНЫЕ КОЛОНКИ В ИСХОДНОМ ЛИСТЕ ==========
   var sourceHeaders = sourceSheet.getRange(1, 1, 1, sourceSheet.getLastColumn()).getValues()[0];
   
-  var colUID_Ozon = -1;      // "UID Ozon"
-  var colUID_WB = -1;        // "UID WB FBS"
-  var colUID_YM = -1;        // "UID Альмамед (ЯМ FBS)"
+  var colUID_Ozon = -1;   // "UID Ozon FBO"
+  var colUID_WB = -1;     // "UID WB FBW/FBS"
+  var colUID_YM = -1;     // "UID Альмамед (ЯМ FBS) РРЦ"
   
   for (var i = 0; i < sourceHeaders.length; i++) {
     var header = sourceHeaders[i] ? sourceHeaders[i].toString().trim() : "";
-    if (header === "UID Ozon") {
+    if (header === "UID Ozon FBO") {
       colUID_Ozon = i;
-    } else if (header === "UID WB FBS") {
+    } else if (header === "UID WB FBW/FBS") {
       colUID_WB = i;
-    } else if (header === "UID Альмамед (ЯМ FBS)") {
+    } else if (header === "UID Альмамед (ЯМ FBS) РРЦ") {
       colUID_YM = i;
     }
   }
   
   if (colUID_Ozon === -1 || colUID_WB === -1 || colUID_YM === -1) {
-    console.log('❌ Не найдены нужные колонки в Huckster Export!');
-    console.log('UID Ozon: ' + colUID_Ozon);
-    console.log('UID WB FBS: ' + colUID_WB);
-    console.log('UID Альмамед (ЯМ FBS): ' + colUID_YM);
-    return;
-  }
-  
-  var lastRow = sourceSheet.getLastRow();
-  if (lastRow === 0) {
-    console.log('Лист "Huckster Export" пуст!');
+    console.log('❌ Не найдены нужные колонки в Huckster Export RRC!');
     return;
   }
   
   // ========== 2. НАХОДИМ СУЩЕСТВУЮЩИЕ КОЛОНКИ В ЦЕЛЕВОМ ЛИСТЕ ==========
   var targetHeaders = targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getValues()[0];
   
-  var colS = -1; // Huckster_Ozon
-  var colT = -1; // Huckster_WB
-  var colU = -1; // Huckster_YM
+  var colV = -1; // Huckster_Ozon_РРЦ
+  var colW = -1; // Huckster_WB_РРЦ
+  var colX = -1; // Huckster_YM_РРЦ
   
   for (var i = 0; i < targetHeaders.length; i++) {
     var header = targetHeaders[i] ? targetHeaders[i].toString().trim() : "";
-    if (header === "Huckster_Ozon") {
-      colS = i;
-    } else if (header === "Huckster_WB") {
-      colT = i;
-    } else if (header === "Huckster_YM") {
-      colU = i;
+    if (header === "Huckster_Ozon_РРЦ") {
+      colV = i;
+    } else if (header === "Huckster_WB_РРЦ") {
+      colW = i;
+    } else if (header === "Huckster_YM_РРЦ") {
+      colX = i;
     }
   }
   
   // Если колонки не найдены - создаем в конце
-  if (colS === -1 || colT === -1 || colU === -1) {
+  if (colV === -1 || colW === -1 || colX === -1) {
     var targetLastCol = targetSheet.getLastColumn();
-    colS = targetLastCol;
-    colT = targetLastCol + 1;
-    colU = targetLastCol + 2;
+    colV = targetLastCol;
+    colW = targetLastCol + 1;
+    colX = targetLastCol + 2;
     
-    targetSheet.getRange(1, colS + 1, 1, 1).setValue("Huckster_Ozon");
-    targetSheet.getRange(1, colT + 1, 1, 1).setValue("Huckster_WB");
-    targetSheet.getRange(1, colU + 1, 1, 1).setValue("Huckster_YM");
-    targetSheet.getRange(1, colS + 1, 1, 3).setFontWeight("bold");
+    targetSheet.getRange(1, colV + 1, 1, 1).setValue("Huckster_Ozon_РРЦ");
+    targetSheet.getRange(1, colW + 1, 1, 1).setValue("Huckster_WB_РРЦ");
+    targetSheet.getRange(1, colX + 1, 1, 1).setValue("Huckster_YM_РРЦ");
+    targetSheet.getRange(1, colV + 1, 1, 3).setFontWeight("bold");
     
-    console.log('📋 Созданы новые колонки Huckster');
+    console.log('📋 Созданы новые колонки Huckster_РРЦ');
   } else {
-    console.log('📋 Найдены существующие колонки Huckster');
+    console.log('📋 Найдены существующие колонки Huckster_РРЦ');
   }
   
   // ========== 3. ЗАБИРАЕМ ДАННЫЕ ==========
@@ -80,7 +77,7 @@ function copyColumnsFromHucksterAdvanced() {
   var dataWB = sourceSheet.getRange(2, colUID_WB + 1, lastRow - 1, 1).getDisplayValues();
   var dataYM = sourceSheet.getRange(2, colUID_YM + 1, lastRow - 1, 1).getDisplayValues();
   
-  // Функция для безопасного преобразования (защита от дат)
+  // Функция для безопасного преобразования в строку (защита от дат)
   function safeToString(value) {
     if (value === undefined || value === null) return "";
     if (value instanceof Date) {
@@ -92,7 +89,7 @@ function copyColumnsFromHucksterAdvanced() {
     return String(value).trim();
   }
   
-  // Обрабатываем данные (защита от дат)
+  // Очищаем данные (коды должны быть текстом)
   var cleanOzon = [];
   var cleanWB = [];
   var cleanYM = [];
@@ -105,21 +102,21 @@ function copyColumnsFromHucksterAdvanced() {
   
   // ========== 4. ОЧИЩАЕМ СТАРЫЕ ДАННЫЕ И ЗАПИСЫВАЕМ НОВЫЕ ==========
   if (lastRow > 1) {
-    targetSheet.getRange(2, colS + 1, lastRow - 1, 1).clearContent();
-    targetSheet.getRange(2, colT + 1, lastRow - 1, 1).clearContent();
-    targetSheet.getRange(2, colU + 1, lastRow - 1, 1).clearContent();
+    targetSheet.getRange(2, colV + 1, lastRow - 1, 1).clearContent();
+    targetSheet.getRange(2, colW + 1, lastRow - 1, 1).clearContent();
+    targetSheet.getRange(2, colX + 1, lastRow - 1, 1).clearContent();
     
-    targetSheet.getRange(2, colS + 1, lastRow - 1, 1).setValues(cleanOzon);
-    targetSheet.getRange(2, colT + 1, lastRow - 1, 1).setValues(cleanWB);
-    targetSheet.getRange(2, colU + 1, lastRow - 1, 1).setValues(cleanYM);
+    targetSheet.getRange(2, colV + 1, lastRow - 1, 1).setValues(cleanOzon);
+    targetSheet.getRange(2, colW + 1, lastRow - 1, 1).setValues(cleanWB);
+    targetSheet.getRange(2, colX + 1, lastRow - 1, 1).setValues(cleanYM);
     
     // Устанавливаем текстовый формат для всех колонок
-    targetSheet.getRange(2, colS + 1, lastRow - 1, 1).setNumberFormat("@");
-    targetSheet.getRange(2, colT + 1, lastRow - 1, 1).setNumberFormat("@");
-    targetSheet.getRange(2, colU + 1, lastRow - 1, 1).setNumberFormat("@");
+    targetSheet.getRange(2, colV + 1, lastRow - 1, 1).setNumberFormat("@");
+    targetSheet.getRange(2, colW + 1, lastRow - 1, 1).setNumberFormat("@");
+    targetSheet.getRange(2, colX + 1, lastRow - 1, 1).setNumberFormat("@");
   }
   
-  targetSheet.autoResizeColumns(colS + 1, 3);
+  targetSheet.autoResizeColumns(colV + 1, 3);
   
   if (targetSheet.getFrozenRows() === 0) {
     targetSheet.setFrozenRows(1);
