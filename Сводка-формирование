@@ -1,0 +1,283 @@
+function updateSummarySheet() {
+  var startTime = new Date();
+  Logger.log("▶️ Старт: " + startTime.toLocaleString());
+  
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sourceSheet = ss.getSheetByName("Файл для работы");
+  var targetSheet = ss.getSheetByName("Сводка");
+  
+  if (!sourceSheet) { Logger.log("❌ Лист 'Файл для работы' не найден"); return; }
+  if (!targetSheet) { Logger.log("❌ Лист 'Сводка' не найден"); return; }
+  
+  var currentDateStr = Utilities.formatDate(new Date(), "Europe/Moscow", "dd.MM.yyyy");
+  
+  // ========== 1. НАХОДИМ КОЛОНКИ В ИСХОДНОМ ЛИСТЕ ==========
+  var headers = sourceSheet.getRange(1, 1, 1, sourceSheet.getLastColumn()).getValues()[0];
+  
+  var rrColumns = ["Huckster_Ozon_РРЦ", "Huckster_WB_РРЦ", "Huckster_YM_РРЦ"];
+  var hucksterColumns = ["Huckster_Ozon", "Huckster_WB", "Huckster_YM"];
+  var ndsColumns = ["НДС Ozon", "НДС WB", "НДС YM"];
+  var dimensionsColumns = [
+    "Длина (см) Ozon", "Ширина (см) Ozon", "Высота (см) Ozon", "Вес (кг) Ozon",
+    "Длина (см) WB", "Ширина (см) WB", "Высота (см) WB", "Вес (кг) WB",
+    "Длина (см) YM", "Ширина (см) YM", "Высота (см) YM", "Вес (кг) YM"
+  ];
+  var articleColumns = ["Артикул (offer_id) Ozon", "Артикул продавца WB", "Артикул YM"];
+  
+  var codeCol = -1;
+  var stopCoopCol = -1;
+  var stockCol = -1;
+  var managerCol = -1;
+  var contentManagerCol = -1;
+  
+  // 👇 НОВЫЕ: Колонки НДС для проверки подсветки
+  var vatCol = -1;
+  var vatOnProductCol = -1;
+  
+  for (var i = 0; i < headers.length; i++) {
+    var h = headers[i];
+    if (h === "Менеджер") managerCol = i;
+    else if (h === "Контент-менеджер") contentManagerCol = i;
+    else if (h === "Код товара") codeCol = i;
+    else if (h === "Перестали сотрудничать / Не производится (дет.в комментах)") stopCoopCol = i;
+    else if (h === "Остаток") stockCol = i;
+    else if (h === "НДС") vatCol = i;               // 👈 ПОИСК
+    else if (h === "НДС на товаре или комплекте") vatOnProductCol = i;  // 👈 ПОИСК
+  }
+  
+  function getIndices(columns) {
+    var indices = [];
+    for (var c = 0; c < columns.length; c++) {
+      for (var i = 0; i < headers.length; i++) {
+        if (headers[i] === columns[c]) { indices.push(i); break; }
+      }
+    }
+    return indices;
+  }
+  
+  var rrIndices = getIndices(rrColumns);
+  var hucksterIndices = getIndices(hucksterColumns);
+  var ndsIndices = getIndices(ndsColumns);
+  var dimensionsIndices = getIndices(dimensionsColumns);
+  var articleIndices = getIndices(articleColumns);
+  
+  // ========== 2. ЧИТАЕМ ДАННЫЕ ==========
+  var lastRow = sourceSheet.getLastRow();
+  var startRow = 2;
+  if (lastRow < startRow) { Logger.log("⚠️ Нет данных"); return; }
+  var dataRows = lastRow - startRow + 1;
+  
+  var managerValues = (managerCol !== -1) ? sourceSheet.getRange(startRow, managerCol + 1, dataRows, 1).getDisplayValues() : null;
+  var contentManagerValues = (contentManagerCol !== -1) ? sourceSheet.getRange(startRow, contentManagerCol + 1, dataRows, 1).getDisplayValues() : null;
+  var codeValues = (codeCol !== -1) ? sourceSheet.getRange(startRow, codeCol + 1, dataRows, 1).getDisplayValues() : null;
+  var stopCoopValues = (stopCoopCol !== -1) ? sourceSheet.getRange(startRow, stopCoopCol + 1, dataRows, 1).getDisplayValues() : null;
+  var stockValues = (stockCol !== -1) ? sourceSheet.getRange(startRow, stockCol + 1, dataRows, 1).getValues() : null;
+  
+  // 👇 Читаем ФОНА (Backgrounds) для колонок НДС
+  var vatBg = null;
+  var vatProductBg = null;
+  if (vatCol !== -1) {
+    vatBg = sourceSheet.getRange(startRow, vatCol + 1, dataRows, 1).getBackgrounds();
+  }
+  if (vatOnProductCol !== -1) {
+    vatProductBg = sourceSheet.getRange(startRow, vatOnProductCol + 1, dataRows, 1).getBackgrounds();
+  }
+  
+  function getBackgrounds(indices) {
+    var backgrounds = [];
+    for (var ci = 0; ci < indices.length; ci++) {
+      backgrounds.push(sourceSheet.getRange(startRow, indices[ci] + 1, dataRows, 1).getBackgrounds());
+    }
+    return backgrounds;
+  }
+  
+  var rrBg = getBackgrounds(rrIndices);
+  var hucksterBg = getBackgrounds(hucksterIndices);
+  var ndsBg = getBackgrounds(ndsIndices);
+  var dimensionsBg = getBackgrounds(dimensionsIndices);
+  
+  var articleValues = [];
+  for (var ci = 0; ci < articleIndices.length; ci++) {
+    articleValues.push(sourceSheet.getRange(startRow, articleIndices[ci] + 1, dataRows, 1).getDisplayValues());
+  }
+  
+  // ========== 3. СЧИТАЕМ ПРОБЛЕМЫ ==========
+  var managerProblems = new Map();
+  var contentManagerProblems = new Map();
+  
+  for (var r = 0; r < dataRows; r++) {
+    var manager = (managerValues && managerValues[r][0]) ? String(managerValues[r][0]).trim() : "";
+    var contentManager = (contentManagerValues && contentManagerValues[r][0]) ? String(contentManagerValues[r][0]).trim() : "";
+    
+    if (manager === "" && contentManager === "") continue;
+    
+    var isStopCoop = false;
+    if (stopCoopValues && stopCoopValues[r][0]) {
+      var coopVal = String(stopCoopValues[r][0]).trim();
+      isStopCoop = (coopVal === "Да" || coopVal === "true" || coopVal === "TRUE");
+    }
+    
+    var hasCode = false;
+    if (codeValues && codeValues[r][0] && !isStopCoop) {
+      if (String(codeValues[r][0]).trim() !== "") hasCode = true;
+    }
+    
+    var hasZeroStock = false;
+    if (stockValues && !isStopCoop) {
+      var stockVal = parseFloat(stockValues[r][0]) || 0;
+      if (stockVal === 0 && hasCode) hasZeroStock = true;
+    }
+    
+    // 👇 ПРОВЕРКА ПОДСВЕТКИ НДС
+    var isVatHighlighted = false;
+    var highlightColor = "#ffe6b3"; // Цвет ошибки из highlightVATMismatch
+    if (vatBg && vatBg[r][0] === highlightColor) isVatHighlighted = true;
+    if (vatProductBg && vatProductBg[r][0] === highlightColor) isVatHighlighted = true;
+    
+    function countColored(backgrounds) {
+      var count = 0;
+      for (var ci = 0; ci < backgrounds.length; ci++) {
+        var bg = backgrounds[ci][r][0];
+        if (bg !== null && bg !== "#ffffff" && bg !== "") count++;
+      }
+      return count;
+    }
+    
+    function countEmpty(values) {
+      var count = 0;
+      for (var ci = 0; ci < values.length; ci++) {
+        var val = values[ci][r][0];
+        if (val === "" || val === null || val === undefined) count++;
+      }
+      return count;
+    }
+    
+    var rrCount = countColored(rrBg);
+    var hucksterCount = countColored(hucksterBg);
+    var ndsCount = countColored(ndsBg);
+    var dimensionsCount = countColored(dimensionsBg);
+    var articleCount = countEmpty(articleValues);
+    
+    // 🟦 Группировка по МЕНЕДЖЕРУ (считаем ВСЁ, включая НДС-расхождения)
+    if (manager !== "") {
+      if (!managerProblems.has(manager)) managerProblems.set(manager, { 
+        rrCount: 0, hucksterCount: 0, ndsCount: 0, dimensionsCount: 0, articleCount: 0, 
+        vatMismatchCount: 0,  // 👈 НОВАЯ МЕТРИКА
+        totalProducts: 0, zeroStockProducts: 0 
+      });
+      var p = managerProblems.get(manager);
+      p.rrCount += rrCount; p.hucksterCount += hucksterCount; p.ndsCount += ndsCount;
+      p.dimensionsCount += dimensionsCount; p.articleCount += articleCount;
+      if (isVatHighlighted) p.vatMismatchCount++;  // 👈 СЧИТАЕМ РАСХОЖДЕНИЯ
+      if (hasCode) p.totalProducts++;
+      if (hasZeroStock) p.zeroStockProducts++;
+    }
+    
+    // 🟩 Группировка по КОНТЕНТ-МЕНЕДЖЕРУ
+    if (contentManager !== "") {
+      if (!contentManagerProblems.has(contentManager)) contentManagerProblems.set(contentManager, { 
+        rrCount: 0, hucksterCount: 0, ndsCount: 0, dimensionsCount: 0, articleCount: 0, 
+        vatMismatchCount: 0,  // 👈 НОВАЯ МЕТРИКА
+        totalProducts: 0, zeroStockProducts: 0 
+      });
+      var cp = contentManagerProblems.get(contentManager);
+      cp.ndsCount += ndsCount;
+      cp.dimensionsCount += dimensionsCount;
+      cp.articleCount += articleCount;
+      if (hasCode) cp.totalProducts++;
+    }
+  }
+  
+  // ========== 4. НАХОДИМ КОЛОНКИ В СВОДКЕ ==========
+  var targetHeaders = targetSheet.getRange(1, 1, 1, targetSheet.getLastColumn()).getValues()[0];
+  
+  var dateCol = -1, managerTargetCol = -1, contentManagerTargetCol = -1;
+  var rrProblemCol = -1, hucksterProblemCol = -1, ndsProblemCol = -1, dimensionsProblemCol = -1, productsProblemCol = -1;
+  var totalProductsCol = -1, zeroStockProductsCol = -1;
+  var vatMismatchTargetCol = -1;  // 👈 НОВАЯ
+  
+  for (var i = 0; i < targetHeaders.length; i++) {
+    var h = targetHeaders[i] ? targetHeaders[i].toString().trim() : "";
+    if (h === "Дата") dateCol = i;
+    else if (h === "Менеджер") managerTargetCol = i;
+    else if (h === "Контент-менеджер") contentManagerTargetCol = i;
+    else if (h === "Проблема с РРЦ") rrProblemCol = i;
+    else if (h === "Проблема с хакстером") hucksterProblemCol = i;
+    else if (h === "Проблемы С НДС маркеты") ndsProblemCol = i;
+    else if (h === "Проблемы с Габаритами") dimensionsProblemCol = i;
+    else if (h === "Проблема с товарами") productsProblemCol = i;
+    else if (h === "Товаров") totalProductsCol = i;
+    else if (h === "Товаров без остатка") zeroStockProductsCol = i;
+    else if (h === "НДС расхождения в МС") vatMismatchTargetCol = i;  // 👈 ПОИСК
+  }
+  
+  // 👇 АВТО-ВСТАВКА КОЛОНКИ: Если колонки НДС нет, но есть "Товаров без остатка" -> вставляем ПОСЛЕ неё
+  if (vatMismatchTargetCol === -1 && zeroStockProductsCol !== -1) {
+    vatMismatchTargetCol = zeroStockProductsCol + 1;
+    // insertColumnAfter принимает 1-based index колонки, ПОСЛЕ которой вставляем
+    targetSheet.insertColumnAfter(zeroStockProductsCol + 1);
+    // Записываем заголовок (индекс в массиве 0-based, значит колонка номер index+1)
+    targetSheet.getRange(1, vatMismatchTargetCol + 1).setValue("НДС расхождения в МС");
+    targetSheet.getRange(1, vatMismatchTargetCol + 1).setFontWeight("bold");
+    Logger.log("📌 Создана колонка 'НДС расхождения в МС' после 'Товаров без остатка'");
+  }
+  
+  Logger.log("📍 Колонки: НДС-расхождения=" + vatMismatchTargetCol);
+  
+  // ========== 5. УДАЛЯЕМ СТРОКИ ЗА СЕГОДНЯ ==========
+  var targetLastRow = targetSheet.getLastRow();
+  var rowsToDelete = [];
+  for (var i = 2; i <= targetLastRow; i++) {
+    var dateValue = targetSheet.getRange(i, dateCol + 1).getDisplayValue();
+    if (dateValue === currentDateStr) rowsToDelete.push(i);
+  }
+  rowsToDelete.sort(function(a, b) { return b - a; });
+  for (var i = 0; i < rowsToDelete.length; i++) targetSheet.deleteRow(rowsToDelete[i]);
+  
+  // ========== 6. ДОБАВЛЯЕМ СТРОКИ: МЕНЕДЖЕРЫ ==========
+  var insertRow = 2;
+  var added = 0;
+  
+  for (var [manager, p] of managerProblems) {
+    targetSheet.insertRowBefore(insertRow);
+    targetSheet.getRange(insertRow, dateCol + 1).setValue(currentDateStr);
+    targetSheet.getRange(insertRow, managerTargetCol + 1).setValue(manager);
+    if (rrProblemCol !== -1) targetSheet.getRange(insertRow, rrProblemCol + 1).setValue(p.rrCount);
+    if (hucksterProblemCol !== -1) targetSheet.getRange(insertRow, hucksterProblemCol + 1).setValue(p.hucksterCount);
+    if (ndsProblemCol !== -1) targetSheet.getRange(insertRow, ndsProblemCol + 1).setValue(p.ndsCount);
+    if (dimensionsProblemCol !== -1) targetSheet.getRange(insertRow, dimensionsProblemCol + 1).setValue(p.dimensionsCount);
+    if (productsProblemCol !== -1) targetSheet.getRange(insertRow, productsProblemCol + 1).setValue(p.articleCount);
+    if (totalProductsCol !== -1) targetSheet.getRange(insertRow, totalProductsCol + 1).setValue(p.totalProducts);
+    if (zeroStockProductsCol !== -1) targetSheet.getRange(insertRow, zeroStockProductsCol + 1).setValue(p.zeroStockProducts);
+    
+    // 👇 ЗАПИСЫВАЕМ НДС-РАСХОЖДЕНИЯ
+    if (vatMismatchTargetCol !== -1) targetSheet.getRange(insertRow, vatMismatchTargetCol + 1).setValue(p.vatMismatchCount);
+    
+    added++;
+  }
+  
+  // ========== 7. ДОБАВЛЯЕМ СТРОКИ: КОНТЕНТ-МЕНЕДЖЕРЫ ==========
+  for (var [cm, cp] of contentManagerProblems) {
+    targetSheet.insertRowBefore(insertRow);
+    targetSheet.getRange(insertRow, dateCol + 1).setValue(currentDateStr);
+    if (contentManagerTargetCol !== -1) targetSheet.getRange(insertRow, contentManagerTargetCol + 1).setValue(cm);
+    
+    // Пустые колонки
+    if (rrProblemCol !== -1) targetSheet.getRange(insertRow, rrProblemCol + 1).setValue("");
+    if (hucksterProblemCol !== -1) targetSheet.getRange(insertRow, hucksterProblemCol + 1).setValue("");
+    if (zeroStockProductsCol !== -1) targetSheet.getRange(insertRow, zeroStockProductsCol + 1).setValue("");
+    if (vatMismatchTargetCol !== -1) targetSheet.getRange(insertRow, vatMismatchTargetCol + 1).setValue(""); // Для контент-менеджеров не считаем
+    
+    // Заполненные
+    if (ndsProblemCol !== -1) targetSheet.getRange(insertRow, ndsProblemCol + 1).setValue(cp.ndsCount);
+    if (dimensionsProblemCol !== -1) targetSheet.getRange(insertRow, dimensionsProblemCol + 1).setValue(cp.dimensionsCount);
+    if (productsProblemCol !== -1) targetSheet.getRange(insertRow, productsProblemCol + 1).setValue(cp.articleCount);
+    if (totalProductsCol !== -1) targetSheet.getRange(insertRow, totalProductsCol + 1).setValue(cp.totalProducts);
+    
+    added++;
+    Logger.log("✅ Контент-менеджер: " + cm + " (Товаров: " + cp.totalProducts + ")");
+  }
+  
+  var elapsed = ((new Date() - startTime) / 1000).toFixed(2);
+  Logger.log("🎉 Готово! Добавлено: " + added + " за " + elapsed + " сек.");
+}
