@@ -1,0 +1,175 @@
+// ========== ОСНОВНАЯ ФУНКЦИЯ ==========
+function exportOzonProducts() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(OZON_SHEET_NAME);
+  if (!sheet) sheet = ss.insertSheet(OZON_SHEET_NAME);
+  else sheet.clearContents();
+
+  const updateTimestamp = Utilities.formatDate(new Date(), OZON_TIMEZONE, "dd.MM.yyyy HH:mm");
+  Logger.log(`🕐 Обновление: ${updateTimestamp}`);
+  
+  // 1. Получаем список товаров
+  Logger.log("🔵 [Ozon] 1/3 Список товаров...");
+  const basicItems = [];
+  let last_id = "";
+  
+  while (basicItems.length < OZON_MAX_ITEMS) {
+    const remaining = Math.min(1000, OZON_MAX_ITEMS - basicItems.length);
+    const response = UrlFetchApp.fetch("https://api-seller.ozon.ru/v3/product/list", {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      headers: { "Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY },
+      payload: JSON.stringify({ 
+        filter: { visibility: OZON_INCLUDE_ARCHIVED ? "ALL" : "VISIBLE" }, 
+        limit: remaining, 
+        last_id 
+      })
+    });
+    
+    const data = JSON.parse(response);
+    const items = data.result?.items || [];
+    for (const item of items) {
+      basicItems.push({ product_id: item.product_id, offer_id: item.offer_id || "" });
+    }
+    last_id = data.result?.last_id || "";
+    if (items.length === 0) break;
+    Utilities.sleep(OZON_REQUEST_DELAY_MS);
+  }
+  
+  if (basicItems.length === 0) {
+    sheet.getRange("A1").setValue("Нет товаров");
+    return;
+  }
+  if (OZON_MAX_ITEMS > 0 && basicItems.length > OZON_MAX_ITEMS) {
+    basicItems.length = OZON_MAX_ITEMS;
+  }
+  
+  Logger.log(`🔵 [Ozon] Найдено ${basicItems.length} товаров. 2/3 Базовые данные...`);
+  
+  // 2. Получаем базовые данные
+  const productDetails = new Map();
+  
+  for (let i = 0; i < basicItems.length; i += OZON_BATCH_SIZE) {
+    const batch = basicItems.slice(i, i + OZON_BATCH_SIZE).map(item => Number(item.product_id));
+    const response = UrlFetchApp.fetch("https://api-seller.ozon.ru/v3/product/info/list", {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      headers: { "Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY },
+      payload: JSON.stringify({ product_id: batch, language: "DEFAULT" })
+    });
+    
+    const data = JSON.parse(response);
+    if (data.items) {
+      for (const item of data.items) {
+        const pid = String(item.id);
+        const status = item.statuses?.status_name || "";
+        const reason = item.statuses?.status_description || "";
+        let stocks = 0;
+        if (item.stocks?.stocks) {
+          stocks = item.stocks.stocks.reduce((s, x) => s + (x.present || 0), 0);
+        }
+        const price = item.price ? `${parseFloat(item.price).toLocaleString('ru-RU')} ₽` : "";
+        
+        let vat = "Без НДС";
+        if (item.vat !== undefined && item.vat !== null) {
+          const vatValue = Number(item.vat);
+          if (vatValue === 20) vat = "20";
+          else if (vatValue === 10) vat = "10";
+          else if (vatValue === 0) vat = "0";
+          else if (vatValue === 6 || vatValue === 7) vat = "Без НДС";
+          else if (vatValue === 1) vat = "НДС не облагается";
+          else vat = String(vatValue);
+        }
+        
+        productDetails.set(pid, {
+          name: item.name || "",
+          status: status,
+          reason: reason,
+          stocks: stocks,
+          price: price,
+          vat: vat,
+          length: "", width: "", height: "", weight: ""
+        });
+      }
+    }
+    Utilities.sleep(OZON_REQUEST_DELAY_MS);
+  }
+  
+  // 3. Получаем габариты (переводим мм в см и сохраняем как ТЕКСТ)
+  Logger.log("📏 [Ozon] 3/3 Получаем габариты...");
+  
+  for (let i = 0; i < basicItems.length; i += OZON_BATCH_SIZE) {
+    const batch = basicItems.slice(i, i + OZON_BATCH_SIZE).map(item => Number(item.product_id));
+    const response = UrlFetchApp.fetch("https://api-seller.ozon.ru/v4/product/info/attributes", {
+      method: "post",
+      contentType: "application/json",
+      muteHttpExceptions: true,
+      headers: { "Client-Id": OZON_CLIENT_ID, "Api-Key": OZON_API_KEY },
+      payload: JSON.stringify({ filter: { product_id: batch }, limit: batch.length })
+    });
+    
+    const data = JSON.parse(response);
+    if (data.result && Array.isArray(data.result)) {
+      for (const product of data.result) {
+        const pid = String(product.id);
+        const existing = productDetails.get(pid);
+        if (existing) {
+          // Получаем значения в СМ
+          let lengthCm = product.depth !== undefined ? (product.depth / 10) : null;
+          let widthCm = product.width !== undefined ? (product.width / 10) : null;
+          let heightCm = product.height !== undefined ? (product.height / 10) : null;
+          let weightKg = product.weight !== undefined ? (parseFloat(product.weight) / 1000) : null;
+          
+          // СОХРАНЯЕМ КАК ТЕКСТ (чтобы Google Sheets не превращал в даты)
+          existing.length = (lengthCm !== null && lengthCm > 0) ? String(lengthCm.toFixed(1)) : "";
+          existing.width = (widthCm !== null && widthCm > 0) ? String(widthCm.toFixed(1)) : "";
+          existing.height = (heightCm !== null && heightCm > 0) ? String(heightCm.toFixed(1)) : "";
+          existing.weight = (weightKg !== null && weightKg > 0) ? String(weightKg.toFixed(2)) : "";
+        }
+      }
+    }
+    Utilities.sleep(OZON_REQUEST_DELAY_MS);
+  }
+  
+  // 4. Формируем таблицу
+  const headers = ["Артикул (offer_id)", "Наименование", "Цена", "НДС", 
+                   "Статус", "Причина блокировки", "Остаток", 
+                   "Длина (см)", "Ширина (см)", "Высота (см)", "Вес (кг)", 
+                   "Кабинет", "Покупателю", "Обновлено"];
+  const output = [headers];
+  
+  for (const item of basicItems) {
+    const d = productDetails.get(String(item.product_id)) || {};
+    output.push([
+      item.offer_id || "", 
+      d.name || "", 
+      d.price || "", 
+      d.vat || "Без НДС",
+      d.status || "", 
+      d.reason || "",
+      d.stocks ?? "", 
+      d.length,
+      d.width,
+      d.height,
+      d.weight,
+      `=HYPERLINK("https://seller.ozon.ru/app/products/${item.product_id}/edit/general-info"; "📝 Кабинет")`,
+      `=HYPERLINK("https://www.ozon.ru/product/${item.product_id}"; "🛒 Покупателю")`,
+      updateTimestamp
+    ]);
+  }
+  
+  // Запись в таблицу
+  sheet.getRange(1, 1, output.length, 14).setValues(output);
+  sheet.getRange(1, 1, 1, 14).setFontWeight("bold").setBackground("#f1f3f4");
+  sheet.setFrozenRows(1);
+  
+  // Ширина колонок
+  const newWidths = [150, 450, 100, 80, 100, 280, 80, 75, 75, 75, 75, 110, 110, 140];
+  newWidths.forEach((w, i) => sheet.setColumnWidth(i + 1, w));
+  
+  sheet.getRange(2, 2, output.length - 1, 1).setWrap(false);
+  
+  Logger.log(`✅ [Ozon] Готово! Всего: ${basicItems.length}, обновлено: ${updateTimestamp}`);
+}
