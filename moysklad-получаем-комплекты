@@ -1,4 +1,4 @@
-// ==================== exportMSBundlesStructure.gs ====================
+// ==================== moysklad-получаем-комплекты.gs ====================
 // ОТДЕЛЬНЫЙ СКРИПТ ДЛЯ СОХРАНЕНИЯ СОСТАВОВ КОМПЛЕКТОВ
 
 const MS_BUNDLES_STRUCTURE_SHEET = "MS_Bundles_Structure";
