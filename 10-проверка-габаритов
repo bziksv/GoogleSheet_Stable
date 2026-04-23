@@ -1,0 +1,197 @@
+function highlightDimensionMismatch() {
+  var startTime = new Date();
+  Logger.log("▶️ Старт: " + startTime.toLocaleString());
+  
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Файл для работы");
+  if (!sheet) { Logger.log("❌ Лист 'Файл для работы' не найден"); return; }
+  
+  // ========== 1. НАХОДИМ КОЛОНКИ ==========
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  
+  // Структура для хранения колонок по маркетам и параметрам
+  var markets = {
+    Ozon: { length: -1, width: -1, height: -1, weight: -1 },
+    WB:   { length: -1, width: -1, height: -1, weight: -1 },
+    YM:   { length: -1, width: -1, height: -1, weight: -1 }
+  };
+  
+  // Поиск колонок
+  for (var i = 0; i < headers.length; i++) {
+    var h = headers[i] ? headers[i].toString().trim() : "";
+    
+    // Ozon
+    if (h === "Длина (см) Ozon") markets.Ozon.length = i;
+    else if (h === "Ширина (см) Ozon") markets.Ozon.width = i;
+    else if (h === "Высота (см) Ozon") markets.Ozon.height = i;
+    else if (h === "Вес (кг) Ozon") markets.Ozon.weight = i;
+    // WB
+    else if (h === "Длина (см) WB") markets.WB.length = i;
+    else if (h === "Ширина (см) WB") markets.WB.width = i;
+    else if (h === "Высота (см) WB") markets.WB.height = i;
+    else if (h === "Вес (кг) WB") markets.WB.weight = i;
+    // YM
+    else if (h === "Длина (см) YM") markets.YM.length = i;
+    else if (h === "Ширина (см) YM") markets.YM.width = i;
+    else if (h === "Высота (см) YM") markets.YM.height = i;
+    else if (h === "Вес (кг) YM") markets.YM.weight = i;
+  }
+  
+  // Проверяем, что нашли хотя бы одну колонку
+  var hasAny = false;
+  for (var m in markets) {
+    for (var p in markets[m]) {
+      if (markets[m][p] !== -1) hasAny = true;
+    }
+  }
+  if (!hasAny) {
+    Logger.log("❌ Не найдены колонки с габаритами!");
+    return;
+  }
+  
+  // Логируем найденные колонки
+  Logger.log("📍 Найденные колонки:");
+  for (var m in markets) {
+    for (var p in markets[m]) {
+      if (markets[m][p] !== -1) {
+        Logger.log("   " + m + " " + p + ": колонка " + (markets[m][p] + 1));
+      }
+    }
+  }
+  
+  // ========== 2. ЧИТАЕМ ДАННЫЕ ==========
+  var lastRow = sheet.getLastRow();
+  var startRow = 2;
+  if (lastRow < startRow) {
+    Logger.log("⚠️ Нет данных для проверки");
+    return;
+  }
+  var dataRows = lastRow - startRow + 1;
+  
+  // Функция для получения значений по маркету и параметру
+  function getValues(market, param) {
+    var col = markets[market][param];
+    if (col === -1) return null;
+    return sheet.getRange(startRow, col + 1, dataRows, 1).getDisplayValues();
+  }
+  
+  // Получаем все значения
+  var values = {
+    Ozon: { length: getValues("Ozon", "length"), width: getValues("Ozon", "width"), height: getValues("Ozon", "height"), weight: getValues("Ozon", "weight") },
+    WB:   { length: getValues("WB", "length"), width: getValues("WB", "width"), height: getValues("WB", "height"), weight: getValues("WB", "weight") },
+    YM:   { length: getValues("YM", "length"), width: getValues("YM", "width"), height: getValues("YM", "height"), weight: getValues("YM", "weight") }
+  };
+  
+  // ========== 3. ФУНКЦИЯ НОРМАЛИЗАЦИИ ==========
+  function normalizeDimension(value) {
+    if (value === "" || value === null || value === undefined) return null; // null = пустое значение
+    var str = String(value).trim().replace(/\s/g, '');
+    if (str === "") return null;
+    str = str.replace(',', '.');
+    var num = parseFloat(str);
+    if (!isNaN(num)) {
+      return num;
+    }
+    return str;
+  }
+  
+  // ========== 4. ПОДГОТОВКА МАССИВОВ ДЛЯ ФОНОВ ==========
+  var lightOrange = "#ffe6b3";
+  var backgrounds = {};
+  
+  // Инициализируем массивы для фонов
+  for (var m in markets) {
+    for (var p in markets[m]) {
+      var col = markets[m][p];
+      if (col !== -1) {
+        backgrounds[col] = new Array(dataRows);
+        for (var r = 0; r < dataRows; r++) {
+          backgrounds[col][r] = null;
+        }
+      }
+    }
+  }
+  
+  // ========== 5. СРАВНИВАЕМ ЗНАЧЕНИЯ ==========
+  var mismatchCount = 0;
+  
+  for (var r = 0; r < dataRows; r++) {
+    // Собираем значения для каждого параметра
+    var params = ["length", "width", "height", "weight"];
+    
+    for (var pi = 0; pi < params.length; pi++) {
+      var param = params[pi];
+      var paramName = (param === "length" ? "Длина" : (param === "width" ? "Ширина" : (param === "height" ? "Высота" : "Вес")));
+      
+      // Собираем НЕПУСТЫЕ значения от всех маркетов
+      var paramValues = [];
+      var marketNames = [];
+      var colIndices = [];
+      
+      for (var m in markets) {
+        if (markets[m][param] !== -1 && values[m][param] !== null) {
+          var rawVal = values[m][param][r][0];
+          var normVal = normalizeDimension(rawVal);
+          
+          // Пропускаем пустые значения - не подсвечиваем их и не учитываем в сравнении
+          if (normVal !== null) {
+            paramValues.push(normVal);
+            marketNames.push(m);
+            colIndices.push(markets[m][param]);
+          }
+        }
+      }
+      
+      // Если меньше 2 непустых значений - не с чем сравнивать, ничего не подсвечиваем
+      if (paramValues.length < 2) continue;
+      
+      // Находим наиболее часто встречающееся значение (моду)
+      var freq = {};
+      for (var i = 0; i < paramValues.length; i++) {
+        var v = paramValues[i];
+        var key = v.toString();
+        freq[key] = (freq[key] || 0) + 1;
+      }
+      
+      // Находим максимальную частоту
+      var maxFreq = 0;
+      var mostCommonValue = null;
+      for (var k in freq) {
+        if (freq[k] > maxFreq) {
+          maxFreq = freq[k];
+          mostCommonValue = k;
+        }
+      }
+      
+      // Если все значения разные (maxFreq === 1) - подсвечиваем все НЕПУСТЫЕ
+      var highlightAll = (maxFreq === 1);
+      
+      // Подсвечиваем ячейки, которые отличаются от большинства
+      for (var i = 0; i < paramValues.length; i++) {
+        var v = paramValues[i];
+        var key = v.toString();
+        var shouldHighlight = highlightAll || (key !== mostCommonValue);
+        
+        if (shouldHighlight) {
+          var col = colIndices[i];
+          backgrounds[col][r] = lightOrange;
+          if (mismatchCount < 20) {
+            Logger.log("⚠️ Строка " + (startRow + r) + ": " + marketNames[i] + " " + paramName + " = '" + v + "' (отличается от большинства)");
+          }
+          mismatchCount++;
+        }
+      }
+    }
+  }
+  
+  // ========== 6. ПРИМЕНЯЕМ ФОНЫ ==========
+  for (var col in backgrounds) {
+    var bgArray = [];
+    for (var r = 0; r < dataRows; r++) {
+      bgArray.push([backgrounds[col][r]]);
+    }
+    sheet.getRange(startRow, parseInt(col) + 1, dataRows, 1).setBackgrounds(bgArray);
+  }
+  
+  Logger.log("📊 Найдено несовпадений габаритов: " + mismatchCount);
+  Logger.log("🎉 Готово за " + ((new Date() - startTime) / 1000).toFixed(2) + " сек.");
+}
