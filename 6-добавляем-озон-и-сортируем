@@ -1,0 +1,202 @@
+function syncOzonDirect() {
+  var startTime = new Date();
+  Logger.log("▶️ Старт Ozon: " + startTime.toLocaleString());
+  
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var src = ss.getSheetByName("Ozon Export");
+  var tgt = ss.getSheetByName("Файл для работы");
+  if (!src || !tgt) { Logger.log("❌ Один из листов не найден"); return; }
+  
+  var SRC_COLS = 14;
+  var START_ROW = 2;
+  var lastRowTgt = tgt.getLastRow();
+  if (lastRowTgt < START_ROW) { Logger.log("⚠️ Нет данных в Файл для работы"); return; }
+  var dataRows = lastRowTgt - START_ROW + 1;
+  
+  // ========== 1. ЧИТАЕМ ИСТОЧНИК ==========
+  var lastRowSrc = src.getLastRow();
+  if (lastRowSrc < 2) { Logger.log("⚠️ Ozon Export пуст"); return; }
+  
+  var srcDisplay = src.getRange(2, 1, lastRowSrc - 1, SRC_COLS).getDisplayValues();
+  var srcFormulas = src.getRange(2, 1, lastRowSrc - 1, SRC_COLS).getFormulas();
+  
+  // Строим карту
+  var ozonMap = {};
+  for (var i = 0; i < srcDisplay.length; i++) {
+    var art = srcDisplay[i][0].trim();
+    if (art) {
+      ozonMap[art] = { v: srcDisplay[i], f: srcFormulas[i] };
+    }
+  }
+  Logger.log("🗺️ Карта Ozon: " + Object.keys(ozonMap).length + " артикулов");
+  
+  // ========== 2. НАХОДИМ БЛОК OZON ПО ТОЧНОМУ ЗАГОЛОВКУ ==========
+  var tgtHeaders = tgt.getRange(1, 1, 1, tgt.getLastColumn()).getValues()[0];
+  var ozonStartCol = -1;
+  
+  // Ищем точное совпадение "Артикул (offer_id) Ozon"
+  for (var c = 0; c < tgtHeaders.length; c++) {
+    var h = tgtHeaders[c] ? tgtHeaders[c].toString().trim() : "";
+    if (h === "Артикул (offer_id) Ozon") {
+      ozonStartCol = c;
+      break;
+    }
+  }
+  
+  // Если блок не найден - создаем в конце
+  if (ozonStartCol === -1) {
+    ozonStartCol = tgt.getLastColumn();
+    Logger.log("📋 Блок Ozon не найден, создаем с колонки " + (ozonStartCol + 1));
+    
+    var headers = src.getRange(1, 1, 1, SRC_COLS).getDisplayValues()[0];
+    var newHeaders = headers.map(function(h) { return h + " Ozon"; });
+    tgt.getRange(1, ozonStartCol + 1, 1, SRC_COLS).setValues([newHeaders]);
+    tgt.getRange(1, ozonStartCol + 1, 1, SRC_COLS).setFontWeight("bold");
+    
+    // Ширина колонок
+    var widths = [150, 450, 100, 80, 120, 280, 80, 75, 75, 75, 75, 110, 110, 140];
+    for (var i = 0; i < widths.length; i++) {
+      tgt.setColumnWidth(ozonStartCol + i + 1, widths[i]);
+    }
+  } else {
+    Logger.log("📋 Найден существующий блок Ozon, начало с колонки " + (ozonStartCol + 1));
+  }
+  
+  // Устанавливаем ТЕКСТОВЫЙ формат для колонки артикулов
+  tgt.getRange(START_ROW, ozonStartCol + 1, dataRows, 1).setNumberFormat("@");
+  
+  // ========== 3. ЧИТАЕМ УСЛОВНЫЕ КОЛОНКИ ==========
+  var aVals = tgt.getRange(START_ROW, 1, dataRows, 1).getDisplayValues();
+  
+  var stopCoopCol = -1;
+  var stockCol = -1;
+  var codeCol = -1;
+  var typeCol = -1;
+  
+  for (var c = 0; c < tgtHeaders.length; c++) {
+    var h = tgtHeaders[c] ? tgtHeaders[c].toString().trim() : "";
+    if (h === "Перестали сотрудничать / Не производится (дет.в комментах)") stopCoopCol = c;
+    else if (h === "Остаток") stockCol = c;
+    else if (h === "Код товара") codeCol = c;
+    else if (h === "Тип") typeCol = c;
+  }
+  
+  var stopVals = stopCoopCol !== -1 ? tgt.getRange(START_ROW, stopCoopCol + 1, dataRows, 1).getDisplayValues() : null;
+  var stockVals = stockCol !== -1 ? tgt.getRange(START_ROW, stockCol + 1, dataRows, 1).getValues() : null;
+  var codeVals = codeCol !== -1 ? tgt.getRange(START_ROW, codeCol + 1, dataRows, 1).getDisplayValues() : null;
+  var typeVals = typeCol !== -1 ? tgt.getRange(START_ROW, typeCol + 1, dataRows, 1).getDisplayValues() : null;
+  
+  // ========== 4. ПОДГОТОВКА МАССИВОВ ==========
+  var headers = src.getRange(1, 1, 1, SRC_COLS).getDisplayValues()[0];
+  var outVals = [], outBgs = [], isFormulaCol = [];
+  for (var c = 0; c < SRC_COLS; c++) {
+    outVals[c] = new Array(dataRows);
+    outBgs[c] = new Array(dataRows);
+    isFormulaCol[c] = headers[c].indexOf("Кабинет") > -1 || headers[c].indexOf("Покупателю") > -1;
+    for (var r = 0; r < dataRows; r++) {
+      outVals[c][r] = "";
+      outBgs[c][r] = null;
+    }
+  }
+  
+  var timestamp = Utilities.formatDate(new Date(), "Europe/Moscow", "dd.MM.yyyy HH:mm");
+  var matched = 0, notFound = 0, skippedStop = 0, skippedBundle = 0;
+  
+  // ========== 5. ОБРАБОТКА ==========
+  for (var r = 0; r < dataRows; r++) {
+    var art = aVals[r][0].trim();
+    if (!art) continue;
+    
+    var skipYellow = false;
+    if (stopVals && stockVals) {
+      var stopVal = stopVals[r][0] ? stopVals[r][0].toString().trim() : "";
+      var isStop = (stopVal === "Да" || stopVal === "true" || stopVal === "TRUE");
+      var currentStock = parseFloat(stockVals[r][0]) || 0;
+      skipYellow = (isStop && currentStock === 0);
+    }
+    
+    var isBundleParent = false;
+    if (codeVals && typeVals) {
+      var code = codeVals[r][0] ? codeVals[r][0].toString().trim() : "";
+      var type = typeVals[r][0] ? typeVals[r][0].toString().trim() : "";
+      if (type === "Товар" && code) {
+        var prefix = code + "-";
+        for (var k in ozonMap) {
+          if (k.startsWith(prefix)) {
+            isBundleParent = true;
+            break;
+          }
+        }
+      }
+    }
+    
+    var found = ozonMap[art];
+    if (found) {
+      matched++;
+      for (var c = 0; c < SRC_COLS; c++) {
+        var h = headers[c];
+        var val = found.v[c];
+        var frm = found.f[c];
+        
+        if (c === 0) {
+          outVals[c][r] = val;
+        }
+        else if (h.indexOf("Обновлено") > -1) {
+          outVals[c][r] = timestamp;
+        }
+        else if (isFormulaCol[c]) {
+          outVals[c][r] = frm || "";
+        }
+        else if (h.indexOf("Остаток") > -1) {
+          var num = parseFloat(val);
+          outVals[c][r] = isNaN(num) ? "" : num;
+        }
+        else if (h.indexOf("НДС") > -1) {
+          var vatStr = String(val).trim().replace(',', '.').replace('%', '');
+          var vatNum = parseFloat(vatStr);
+          if (vatNum === 0 || vatStr === "0" || vatStr === "0.00") outVals[c][r] = "Без НДС";
+          else if (vatNum === 5 || vatStr === "5" || vatStr === "0.05") outVals[c][r] = "5";
+          else if (vatNum === 7 || vatStr === "7" || vatStr === "0.07") outVals[c][r] = "7";
+          else if (vatNum === 10 || vatStr === "10" || vatStr === "0.10") outVals[c][r] = "10";
+          else if (vatNum === 20 || vatStr === "20" || vatStr === "0.20") outVals[c][r] = "20";
+          else if (vatNum === 22 || vatStr === "22" || vatStr === "0.22") outVals[c][r] = "22";
+          else outVals[c][r] = val;
+        }
+        else {
+          outVals[c][r] = val;
+        }
+      }
+    } else {
+      notFound++;
+      if (skipYellow || isBundleParent) {
+        if (skipYellow) skippedStop++;
+        if (isBundleParent) skippedBundle++;
+      } else {
+        for (var c = 0; c < SRC_COLS; c++) {
+          outBgs[c][r] = "#ffff00";
+        }
+      }
+    }
+  }
+  
+  // ========== 6. ЗАПИСЬ ==========
+  for (var c = 0; c < SRC_COLS; c++) {
+    var col = ozonStartCol + c + 1;
+    var dataToWrite = [];
+    for (var r = 0; r < dataRows; r++) {
+      dataToWrite.push([outVals[c][r]]);
+    }
+    
+    if (isFormulaCol[c]) {
+      tgt.getRange(START_ROW, col, dataRows, 1).setFormulas(dataToWrite);
+    } else {
+      tgt.getRange(START_ROW, col, dataRows, 1).setValues(dataToWrite);
+    }
+    tgt.getRange(START_ROW, col, dataRows, 1).setBackgrounds(outBgs[c].map(function(b) { return [b]; }));
+  }
+  
+  if (tgt.getFrozenRows() === 0) tgt.setFrozenRows(1);
+  
+  Logger.log("📊 Ozon ИТОГО: ✅ " + matched + " | ❌ " + notFound + " | ⏭️ Стоп: " + skippedStop + " | ⏭️ Комплект: " + skippedBundle);
+  Logger.log("🎉 Ozon Готово за " + ((new Date() - startTime) / 1000).toFixed(2) + " сек.");
+}
