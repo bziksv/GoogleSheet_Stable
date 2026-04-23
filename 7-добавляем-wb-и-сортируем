@@ -1,0 +1,262 @@
+function syncWBDirect() {
+  var startTime = new Date();
+  Logger.log("▶️ Старт WB: " + startTime.toLocaleString());
+  
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var src = ss.getSheetByName("WB Export");
+  var tgt = ss.getSheetByName("Файл для работы");
+  if (!src || !tgt) { Logger.log("❌ Один из листов не найден"); return; }
+  
+  // ========== 1. ОПРЕДЕЛЯЕМ КОЛОНКИ В ИСТОЧНИКЕ ==========
+  var srcHeaders = src.getRange(1, 1, 1, src.getLastColumn()).getValues()[0];
+  
+  var srcCols = {
+    article: -1, name: -1, price: -1, vat: -1,
+    status: -1, reason: -1, stock: -1,
+    length: -1, width: -1, height: -1, weight: -1,
+    cabinet: -1, customer: -1, updated: -1
+  };
+  
+  for (var i = 0; i < srcHeaders.length; i++) {
+    var h = String(srcHeaders[i] || "").toLowerCase().trim();
+    if (h.indexOf("артикул продавца") > -1 || h.indexOf("артикул") > -1 || h.indexOf("offer") > -1 || h.indexOf("vendor") > -1) srcCols.article = i;
+    else if (h.indexOf("наименование") > -1 || h.indexOf("name") > -1) srcCols.name = i;
+    else if (h.indexOf("цена") > -1 || h.indexOf("price") > -1) srcCols.price = i;
+    else if (h.indexOf("ндс") > -1 || h.indexOf("vat") > -1) srcCols.vat = i;
+    else if (h.indexOf("статус") > -1 || h.indexOf("status") > -1) srcCols.status = i;
+    else if (h.indexOf("причина") > -1 || h.indexOf("reason") > -1) srcCols.reason = i;
+    else if (h.indexOf("остаток") > -1 || h.indexOf("stock") > -1) srcCols.stock = i;
+    else if (h.indexOf("длина") > -1 || h.indexOf("length") > -1) srcCols.length = i;
+    else if (h.indexOf("ширина") > -1 || h.indexOf("width") > -1) srcCols.width = i;
+    else if (h.indexOf("высота") > -1 || h.indexOf("height") > -1) srcCols.height = i;
+    else if (h.indexOf("вес") > -1 || h.indexOf("weight") > -1) srcCols.weight = i;
+    else if (h.indexOf("кабинет") > -1 || h.indexOf("cabinet") > -1) srcCols.cabinet = i;
+    else if (h.indexOf("покупателю") > -1 || h.indexOf("customer") > -1) srcCols.customer = i;
+    else if (h.indexOf("обновлено") > -1 || h.indexOf("update") > -1) srcCols.updated = i;
+  }
+  
+  if (srcCols.article === -1) {
+    Logger.log("❌ В листе WB Export не найдена колонка с артикулами!");
+    Logger.log("📋 Доступные заголовки: " + srcHeaders.join(", "));
+    return;
+  }
+  
+  var srcMaxCol = srcHeaders.length;
+  Logger.log("📋 WB Export: найдено колонок: " + srcMaxCol);
+  
+  // ========== 2. ЧИТАЕМ ДАННЫЕ ИЗ WB EXPORT ==========
+  var lastRowSrc = src.getLastRow();
+  if (lastRowSrc < 2) { Logger.log("⚠️ WB Export пуст"); return; }
+  
+  var srcDisplay = src.getRange(2, 1, lastRowSrc - 1, srcMaxCol).getDisplayValues();
+  var srcFormulas = src.getRange(2, 1, lastRowSrc - 1, srcMaxCol).getFormulas();
+  
+  var wbMap = {};
+  for (var i = 0; i < srcDisplay.length; i++) {
+    var art = srcDisplay[i][srcCols.article].trim();
+    if (art) {
+      wbMap[art] = { v: srcDisplay[i], f: srcFormulas[i] };
+    }
+  }
+  Logger.log("🗺️ Карта WB: " + Object.keys(wbMap).length + " артикулов");
+  
+  // ========== 3. НАХОДИМ БЛОК WB В ЦЕЛИ ==========
+  var tgtHeaders = tgt.getRange(1, 1, 1, tgt.getLastColumn()).getValues()[0];
+  var wbStartCol = -1;
+  
+  for (var c = 0; c < tgtHeaders.length; c++) {
+    var h = tgtHeaders[c] ? tgtHeaders[c].toString().trim() : "";
+    if (h === "Артикул (offer_id) WB" || h === "Артикул WB" || h === "offer_id WB" || h === "Артикул продавца WB" || h === "Код WB") {
+      wbStartCol = c;
+      Logger.log("📍 Найден блок WB по заголовку: '" + h + "' в колонке " + (c + 1));
+      break;
+    }
+  }
+  
+  var WB_COLS = srcHeaders.length;
+  
+  if (wbStartCol === -1) {
+    wbStartCol = tgt.getLastColumn();
+    Logger.log("📋 Блок WB не найден, создаем с колонки " + (wbStartCol + 1));
+    
+    var newHeaders = srcHeaders.map(function(h) { return h + " WB"; });
+    tgt.getRange(1, wbStartCol + 1, 1, WB_COLS).setValues([newHeaders]);
+    tgt.getRange(1, wbStartCol + 1, 1, WB_COLS).setFontWeight("bold");
+    
+    var widths = [150, 450, 100, 80, 120, 280, 80, 75, 75, 75, 75, 110, 110, 140];
+    for (var i = 0; i < widths.length && i < WB_COLS; i++) {
+      tgt.setColumnWidth(wbStartCol + i + 1, widths[i]);
+    }
+  }
+  
+  // ========== 4. ЧИТАЕМ ДАННЫЕ ИЗ ЦЕЛЕВОГО ЛИСТА ==========
+  var START_ROW = 2;
+  var lastRowTgt = tgt.getLastRow();
+  if (lastRowTgt < START_ROW) { Logger.log("⚠️ Нет данных в Файл для работы"); return; }
+  var dataRows = lastRowTgt - START_ROW + 1;
+  
+  // Устанавливаем ТЕКСТОВЫЙ ФОРМАТ для ВСЕХ колонок блока WB
+  tgt.getRange(START_ROW, wbStartCol + 1, dataRows, WB_COLS).setNumberFormat("@");
+  
+  var aVals = tgt.getRange(START_ROW, 1, dataRows, 1).getDisplayValues();
+  
+  // Функция защиты от дат
+  function protectValue(value) {
+    if (value === "" || value === null || value === undefined) return "";
+    var str = String(value).trim();
+    if (str === "0" || str === "0.00" || str === "0,00") return "0";
+    if (/^\d+[.-]\d+/.test(str)) {
+      return "'" + str;
+    }
+    return str;
+  }
+  
+  // Находим колонки для условий
+  var stopCoopCol = -1, stockCol = -1, codeCol = -1, typeCol = -1;
+  for (var c = 0; c < tgtHeaders.length; c++) {
+    var h = tgtHeaders[c] ? tgtHeaders[c].toString().trim() : "";
+    if (h === "Перестали сотрудничать / Не производится (дет.в комментах)") stopCoopCol = c;
+    else if (h === "Остаток") stockCol = c;
+    else if (h === "Код товара") codeCol = c;
+    else if (h === "Тип") typeCol = c;
+  }
+  
+  var stopVals = stopCoopCol !== -1 ? tgt.getRange(START_ROW, stopCoopCol + 1, dataRows, 1).getDisplayValues() : null;
+  var stockVals = stockCol !== -1 ? tgt.getRange(START_ROW, stockCol + 1, dataRows, 1).getValues() : null;
+  var codeVals = codeCol !== -1 ? tgt.getRange(START_ROW, codeCol + 1, dataRows, 1).getDisplayValues() : null;
+  var typeVals = typeCol !== -1 ? tgt.getRange(START_ROW, typeCol + 1, dataRows, 1).getDisplayValues() : null;
+  
+  // ========== 5. ПОДГОТОВКА МАССИВОВ ==========
+  var outVals = [], outBgs = [], isFormulaCol = [];
+  for (var c = 0; c < WB_COLS; c++) {
+    outVals[c] = new Array(dataRows);
+    outBgs[c] = new Array(dataRows);
+    isFormulaCol[c] = (c === srcCols.cabinet || c === srcCols.customer);
+    for (var r = 0; r < dataRows; r++) {
+      outVals[c][r] = "";
+      outBgs[c][r] = null;
+    }
+  }
+  
+  var timestamp = Utilities.formatDate(new Date(), "Europe/Moscow", "dd.MM.yyyy HH:mm");
+  var matched = 0, notFound = 0, skippedStop = 0, skippedBundle = 0;
+  
+  // ========== 6. ОБРАБОТКА ==========
+  for (var r = 0; r < dataRows; r++) {
+    var art = aVals[r][0].trim();
+    if (!art) continue;
+    
+    var skipYellow = false;
+    if (stopVals && stockVals) {
+      var stopVal = stopVals[r][0] ? stopVals[r][0].toString().trim() : "";
+      var isStop = (stopVal === "Да" || stopVal === "true" || stopVal === "TRUE");
+      var currentStock = parseFloat(stockVals[r][0]) || 0;
+      skipYellow = (isStop && currentStock === 0);
+    }
+    
+    var isBundleParent = false;
+    if (codeVals && typeVals) {
+      var code = codeVals[r][0] ? codeVals[r][0].toString().trim() : "";
+      var type = typeVals[r][0] ? typeVals[r][0].toString().trim() : "";
+      if (type === "Товар" && code) {
+        var prefix = code + "-";
+        for (var k in wbMap) {
+          if (k.startsWith(prefix)) {
+            isBundleParent = true;
+            break;
+          }
+        }
+      }
+    }
+    
+    var found = wbMap[art];
+    if (found) {
+      matched++;
+      for (var c = 0; c < WB_COLS; c++) {
+        var val = found.v[c];
+        var frm = found.f[c];
+        var h = srcHeaders[c];
+        
+        if (c === srcCols.article) {
+          outVals[c][r] = protectValue(val);
+        }
+        else if (c === srcCols.updated || h.indexOf("Обновлено") > -1) {
+          outVals[c][r] = timestamp;
+        }
+        else if (c === srcCols.cabinet || c === srcCols.customer) {
+          outVals[c][r] = frm || "";
+        }
+        else if (c === srcCols.stock) {
+          var num = parseFloat(val);
+          if (val === "" || val === null || val === undefined) {
+            outVals[c][r] = "0";
+          } else if (num === 0 || String(val).trim() === "0") {
+            outVals[c][r] = "0";
+          } else {
+            outVals[c][r] = protectValue(val);
+          }
+        }
+        else if (c === srcCols.vat) {
+          // Обработка НДС: заменяем "Без НДС%" на "Без НДС"
+          var vatStr = String(val).trim().replace(',', '.').replace('%', '');
+          
+          // Проверяем на "Без НДС%" и другие варианты
+          if (vatStr === "Без НДС%" || vatStr === "Без НДС" || vatStr === "без ндс" || vatStr === "безндс") {
+            outVals[c][r] = "Без НДС";
+          } else {
+            var vatNum = parseFloat(vatStr);
+            if (vatNum === 0 || vatStr === "0" || vatStr === "0.00") {
+              outVals[c][r] = "Без НДС";
+            } else if (vatNum === 5 || vatStr === "5" || vatStr === "0.05") {
+              outVals[c][r] = "5";
+            } else if (vatNum === 7 || vatStr === "7" || vatStr === "0.07") {
+              outVals[c][r] = "7";
+            } else if (vatNum === 10 || vatStr === "10" || vatStr === "0.10") {
+              outVals[c][r] = "10";
+            } else if (vatNum === 20 || vatStr === "20" || vatStr === "0.20") {
+              outVals[c][r] = "20";
+            } else if (vatNum === 22 || vatStr === "22" || vatStr === "0.22") {
+              outVals[c][r] = "22";
+            } else {
+              outVals[c][r] = protectValue(val);
+            }
+          }
+        }
+        else {
+          outVals[c][r] = protectValue(val);
+        }
+      }
+    } else {
+      notFound++;
+      if (skipYellow || isBundleParent) {
+        if (skipYellow) skippedStop++;
+        if (isBundleParent) skippedBundle++;
+      } else {
+        for (var c = 0; c < WB_COLS; c++) {
+          outBgs[c][r] = "#ffff00";
+        }
+      }
+    }
+  }
+  
+  // ========== 7. ЗАПИСЬ ==========
+  for (var c = 0; c < WB_COLS; c++) {
+    var col = wbStartCol + c + 1;
+    var dataToWrite = [];
+    for (var r = 0; r < dataRows; r++) {
+      dataToWrite.push([outVals[c][r]]);
+    }
+    
+    if (isFormulaCol[c]) {
+      tgt.getRange(START_ROW, col, dataRows, 1).setFormulas(dataToWrite);
+    } else {
+      tgt.getRange(START_ROW, col, dataRows, 1).setValues(dataToWrite);
+    }
+    tgt.getRange(START_ROW, col, dataRows, 1).setBackgrounds(outBgs[c].map(function(b) { return [b]; }));
+  }
+  
+  if (tgt.getFrozenRows() === 0) tgt.setFrozenRows(1);
+  
+  Logger.log("📊 WB ИТОГО: ✅ " + matched + " | ❌ " + notFound + " | ⏭️ Стоп: " + skippedStop + " | ⏭️ Комплект: " + skippedBundle);
+  Logger.log("🎉 WB Готово за " + ((new Date() - startTime) / 1000).toFixed(2) + " сек.");
+}
