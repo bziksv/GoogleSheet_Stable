@@ -1,0 +1,12 @@
+function clearWorkSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Файл для работы");
+  
+  if (!sheet) {
+    console.log('❌ Лист "Файл для работы" не найден!');
+    return;
+  }
+  
+  sheet.clear();
+  console.log('✅ Лист "Файл для работы" полностью очищен');
+}
