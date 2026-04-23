@@ -1,0 +1,178 @@
+function deleteAddedDataByHeaders() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var targetSheet = ss.getSheetByName("Файл для работы");
+  
+  if (!targetSheet) {
+    console.log('Лист "Файл для работы" не найден!');
+    return;
+  }
+  
+  var targetLastCol = targetSheet.getLastColumn();
+  if (targetLastCol === 0) {
+    console.log('Лист "Файл для работы" пуст, нечего удалять');
+    return;
+  }
+  
+  var headerRow = targetSheet.getRange(1, 1, 1, targetLastCol).getValues()[0];
+  
+  var markersToDelete = [
+    "Huckster_Ozon", "Huckster_WB", "Huckster_YM",
+    "Huckster_Ozon_РРЦ", "Huckster_WB_РРЦ", "Huckster_YM_РРЦ",
+    "Ozon", "WB Export", "YM Export"
+  ];
+  
+  var colsToDelete = [];
+  
+  for (var i = 0; i < headerRow.length; i++) {
+    var headerValue = headerRow[i] ? headerRow[i].toString() : "";
+    for (var m = 0; m < markersToDelete.length; m++) {
+      if (headerValue.indexOf(markersToDelete[m]) !== -1) {
+        colsToDelete.push(i + 1);
+        break;
+      }
+    }
+  }
+  
+  if (colsToDelete.length === 0) {
+    console.log('Не найдено добавленных данных для удаления');
+    return;
+  }
+  
+  colsToDelete.sort(function(a, b) { return b - a; });
+  
+  for (var j = 0; j < colsToDelete.length; j++) {
+    var col = colsToDelete[j];
+    var lastRow = targetSheet.getLastRow();
+    if (lastRow === 0) lastRow = 1;
+    
+    var range = targetSheet.getRange(1, col, lastRow, 1);
+    range.clearContent();
+    
+    console.log('Очищена колонка ' + getColumnLetter(col) + ' (' + headerRow[col-1] + ')');
+  }
+  
+  console.log('✅ Удалены данные из ' + colsToDelete.length + ' колонок');
+  
+  if (targetSheet.getFrozenRows() === 0) {
+    targetSheet.setFrozenRows(1);
+  }
+}
+
+// ==================== ОЧИСТКА ФОНА ОТ КОЛОНКИ T ДО КОНЦА ====================
+function clearBackgroundFromColumnT() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var targetSheet = ss.getSheetByName("Файл для работы");
+  
+  if (!targetSheet) {
+    console.log('Лист "Файл для работы" не найден!');
+    return;
+  }
+  
+  // Колонка T = 20
+  var startCol = 20;
+  var lastCol = targetSheet.getLastColumn();
+  var lastRow = targetSheet.getLastRow();
+  
+  if (lastCol < startCol) {
+    console.log('Нет колонок от T и далее');
+    return;
+  }
+  
+  if (lastRow === 0) {
+    console.log('Лист пуст');
+    return;
+  }
+  
+  // Полная очистка формата для диапазона
+  var range = targetSheet.getRange(1, startCol, lastRow, lastCol - startCol + 1);
+  
+  // Очищаем всё: содержимое, форматы, фон
+  range.clearFormat();      // очищает все форматы (включая условное форматирование)
+  range.setBackground(null); // дополнительно сбрасываем фон
+  
+  console.log('✅ Очищен фон в колонках от T (' + getColumnLetter(startCol) + ') до ' + getColumnLetter(lastCol) + ' (' + lastRow + ' строк)');
+}
+
+// ==================== УДАЛЕНИЕ ВСЕХ ПРАВИЛ УСЛОВНОГО ФОРМАТИРОВАНИЯ ====================
+function removeAllConditionalFormatting() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var targetSheet = ss.getSheetByName("Файл для работы");
+  
+  if (!targetSheet) {
+    console.log('Лист "Файл для работы" не найден!');
+    return;
+  }
+  
+  // Удаляем все правила условного форматирования
+  targetSheet.setConditionalFormatRules([]);
+  
+  console.log('✅ Удалены все правила условного форматирования');
+}
+
+// ==================== ПОЛНАЯ ОЧИСТКА (ДАННЫЕ + ФОН + УСЛОВНОЕ ФОРМАТИРОВАНИЕ) ====================
+function cleanAllAddedData() {
+  // 1. Удаляем правила условного форматирования
+  removeAllConditionalFormatting();
+  
+  // 2. Удаляем данные по маркерам
+  deleteAddedDataByHeaders();
+  
+  // 3. Очищаем фон от колонки T до конца
+  clearBackgroundFromColumnT();
+  
+  console.log('✅ Полная очистка завершена');
+}
+
+// ==================== ОЧИСТКА ФОНА ВО ВСЕХ ЯЧЕЙКАХ ====================
+function clearAllBackgrounds() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var targetSheet = ss.getSheetByName("Файл для работы");
+  
+  if (!targetSheet) {
+    console.log('Лист "Файл для работы" не найден!');
+    return;
+  }
+  
+  var lastRow = targetSheet.getLastRow();
+  var lastCol = targetSheet.getLastColumn();
+  
+  if (lastRow === 0 || lastCol === 0) {
+    console.log('Лист пуст, нечего очищать');
+    return;
+  }
+  
+  var range = targetSheet.getRange(1, 1, lastRow, lastCol);
+  range.clearFormat();
+  range.setBackground(null);
+  
+  console.log('✅ Очищена заливка во всех ячейках (' + lastRow + ' строк, ' + lastCol + ' колонок)');
+}
+
+// ==================== СБРОС ВСЕГО ЛИСТА (полная очистка) ====================
+function resetSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var targetSheet = ss.getSheetByName("Файл для работы");
+  
+  if (!targetSheet) {
+    console.log('Лист "Файл для работы" не найден!');
+    return;
+  }
+  
+  // Полная очистка всего листа
+  targetSheet.clear();
+  
+  // Сбрасываем заморозку строк
+  targetSheet.setFrozenRows(0);
+  
+  console.log('✅ Лист "Файл для работы" полностью очищен');
+}
+
+function getColumnLetter(colNumber) {
+  var letter = '';
+  while (colNumber > 0) {
+    var remainder = (colNumber - 1) % 26;
+    letter = String.fromCharCode(65 + remainder) + letter;
+    colNumber = Math.floor((colNumber - 1) / 26);
+  }
+  return letter;
+}
