@@ -1,0 +1,115 @@
+// ==================== НАСТРОЙКИ ====================
+// Вебхук для менеджеров (основной чат)
+const SYNO_WEBHOOK_URL = "https://s.prime-ltd.su/webapi/entry.cgi?api=SYNO.Chat.External&method=incoming&version=2&token=53HbSbHtHIIFM4515xjQReBJhURhhdBPcUyL96K37zYYpAM5GCDITBOF4rpLZsCz";
+
+// 👇 НОВЫЙ: Вебхук для контент-менеджеров
+const SYNO_WEBHOOK_CONTENT_URL = "https://s.prime-ltd.su/webapi/entry.cgi?api=SYNO.Chat.External&method=incoming&version=2&token=%2233rbvFFubbigAaAeK5u2s4MNRPrk3ixEBcLqLLzG0RkKJZStJXboTWZIN9AjrPN9%22";
+
+// ==================== ОТПРАВКА УВЕДОМЛЕНИЯ ====================
+function sendSynoNotification(message, webhookUrl) {
+  // Если URL не передан — используем основной
+  var url = webhookUrl || SYNO_WEBHOOK_URL;
+  
+  var payload = { "text": message };
+  var options = {
+    "method": "post",
+    "payload": "payload=" + JSON.stringify(payload),
+    "muteHttpExceptions": true
+  };
+  UrlFetchApp.fetch(url, options);
+}
+
+// ==================== ФОРМАТИРОВАНИЕ ДАТЫ ====================
+function formatDate(date) {
+  if (!date) return "";
+  if (typeof date === "string") return date;
+  var d = new Date(date);
+  var day = d.getDate().toString().padStart(2, '0');
+  var month = (d.getMonth() + 1).toString().padStart(2, '0');
+  var year = d.getFullYear();
+  return day + "." + month + "." + year;
+}
+
+// ==================== ОТПРАВКА СВОДКИ ====================
+function sendSummaryToChat() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Сводка");
+  if (!sheet) {
+    Logger.log("❌ Лист 'Сводка' не найден");
+    return;
+  }
+  
+  var currentDate = Utilities.formatDate(new Date(), "Europe/Moscow", "dd.MM.yyyy");
+  var data = sheet.getDataRange().getValues();
+  var headers = data[0];
+  
+  // Создаём карту колонок
+  var col = {};
+  for (var i = 0; i < headers.length; i++) {
+    col[headers[i]] = i;
+  }
+  
+  // Проверяем наличие нужных колонок
+  var hasContentManager = col["Контент-менеджер"] !== undefined;
+  var hasManager = col["Менеджер"] !== undefined;
+  var hasVatMismatch = col["НДС расхождения в МС"] !== undefined;  // 👈 НОВАЯ ПРОВЕРКА
+  
+  // Собираем данные для двух типов уведомлений
+  var managerMessages = [];
+  var contentMessages = [];
+  
+  for (var i = 1; i < data.length; i++) {
+    var dateStr = formatDate(data[i][col["Дата"]]);
+    if (dateStr !== currentDate) continue;
+    
+    var manager = hasManager ? (data[i][col["Менеджер"]] || "") : "";
+    var contentManager = hasContentManager ? (data[i][col["Контент-менеджер"]] || "") : "";
+    
+    // === УВЕДОМЛЕНИЕ ДЛЯ МЕНЕДЖЕРА (если есть) ===
+    if (manager !== "") {
+      var mgrMsg = "👤 *" + manager + "*\n";
+      mgrMsg += "📦 Товаров: " + (data[i][col["Товаров"]] || 0) + "\n";
+      mgrMsg += "⚠️ Без остатка: " + (data[i][col["Товаров без остатка"]] || 0) + "\n";
+      // 👇 НОВАЯ СТРОКА: НДС расхождения в МС (перед Хакстер)
+      if (hasVatMismatch) {
+        mgrMsg += "🔶 НДС расхождения в МС: " + (data[i][col["НДС расхождения в МС"]] || 0) + "\n";
+      }
+      mgrMsg += "🟠 Хакстер (обычные): " + (data[i][col["Проблема с хакстером"]] || 0) + "\n";
+      mgrMsg += "🔴 Хакстер (РРЦ): " + (data[i][col["Проблема с РРЦ"]] || 0) + "\n";
+      mgrMsg += "📦 Проблема с товарами: " + (data[i][col["Проблема с товарами"]] || 0) + "\n";
+      mgrMsg += "🟡 НДС маркеты: " + (data[i][col["Проблемы С НДС маркеты"]] || 0) + "\n";
+      mgrMsg += "📏 Габариты: " + (data[i][col["Проблемы с Габаритами"]] || 0) + "\n";
+      managerMessages.push(mgrMsg);
+    }
+    
+    // === УВЕДОМЛЕНИЕ ДЛЯ КОНТЕНТ-МЕНЕДЖЕРА (если есть) ===
+    // 👇 Только 3 колонки: Проблема с товарами, НДС, Габариты
+    if (contentManager !== "") {
+      var cmMsg = "✍️ *" + contentManager + "*\n";
+      cmMsg += "📦 Проблема с товарами: " + (data[i][col["Проблема с товарами"]] || 0) + "\n";
+      cmMsg += "🟡 Проблемы С НДС маркеты: " + (data[i][col["Проблемы С НДС маркеты"]] || 0) + "\n";
+      cmMsg += "📏 Проблемы с Габаритами: " + (data[i][col["Проблемы с Габаритами"]] || 0) + "\n";
+      contentMessages.push(cmMsg);
+    }
+  }
+  
+  // === ОТПРАВЛЯЕМ УВЕДОМЛЕНИЯ ===
+  
+  // 1. Менеджерам → основной вебхук
+  if (managerMessages.length > 0) {
+    var fullMgrMsg = "📊 *ОТЧЕТ ДЛЯ МЕНЕДЖЕРОВ — " + currentDate + "*\n\n" + managerMessages.join("\n");
+    sendSynoNotification(fullMgrMsg, SYNO_WEBHOOK_URL);
+    Logger.log("✅ Отправлено уведомлений менеджерам: " + managerMessages.length);
+  }
+  
+  // 2. Контент-менеджерам → отдельный вебхук
+  if (contentMessages.length > 0) {
+    var fullCmMsg = "📝 *ОТЧЕТ ДЛЯ КОНТЕНТ-МЕНЕДЖЕРОВ — " + currentDate + "*\n\n" + contentMessages.join("\n");
+    sendSynoNotification(fullCmMsg, SYNO_WEBHOOK_CONTENT_URL);
+    Logger.log("✅ Отправлено уведомлений контент-менеджерам: " + contentMessages.length);
+  }
+  
+  if (managerMessages.length === 0 && contentMessages.length === 0) {
+    Logger.log("⚠️ Нет данных для отправки за " + currentDate);
+  }
+}
