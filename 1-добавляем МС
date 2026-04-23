@@ -1,0 +1,157 @@
+function copyAllColumnsToFileForWork() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sourceSheet = ss.getSheetByName("MS Export");
+  var targetSheet = ss.getSheetByName("Файл для работы");
+  
+  if (!sourceSheet) {
+    console.log('Лист "MS Export" не найден!');
+    return;
+  }
+  
+  if (!targetSheet) {
+    console.log('Лист "Файл для работы" не найден!');
+    return;
+  }
+  
+  // Получаем данные из источника
+  var lastRow = sourceSheet.getLastRow();
+  var lastCol = sourceSheet.getLastColumn();
+  
+  if (lastRow === 0) {
+    console.log('Лист "MS Export" пуст!');
+    return;
+  }
+  
+  var sourceData = sourceSheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var sourceHeaders = sourceData[0];
+  
+  // ========== 1. НАХОДИМ СУЩЕСТВУЮЩИЕ КОЛОНКИ ==========
+  var targetLastCol = targetSheet.getLastColumn();
+  var targetHeaders = [];
+  
+  if (targetLastCol > 0) {
+    targetHeaders = targetSheet.getRange(1, 1, 1, targetLastCol).getValues()[0];
+  }
+  
+  // Карта: заголовок -> индекс колонки в цели
+  var columnMap = {};
+  for (var i = 0; i < sourceHeaders.length; i++) {
+    columnMap[sourceHeaders[i]] = -1;
+  }
+  
+  for (var i = 0; i < targetHeaders.length; i++) {
+    var header = targetHeaders[i] ? targetHeaders[i].toString().trim() : "";
+    if (columnMap.hasOwnProperty(header)) {
+      columnMap[header] = i;
+    }
+  }
+  
+  // ========== 1.5. ВСТАВЛЯЕМ "contentManager" ПОСЛЕ "Менеджер" ЕСЛИ НЕТ ==========
+  var managerHeader = "Менеджер";
+  var contentManagerHeader = "contentManager";  // ← как в экспорте из MS
+  
+  var managerIdx = columnMap[managerHeader];
+  var contentManagerIdx = columnMap[contentManagerHeader];
+  
+  // Если контент-менеджер есть в источнике, но нет в цели — вставляем после "Менеджер"
+  if (contentManagerIdx === -1 && sourceHeaders.indexOf(contentManagerHeader) !== -1) {
+    var insertPos = (managerIdx !== -1) ? managerIdx + 1 : targetLastCol;
+    
+    // Сдвигаем существующие колонки вправо в columnMap
+    for (var h in columnMap) {
+      if (columnMap[h] >= insertPos && columnMap[h] !== -1) {
+        columnMap[h]++;
+      }
+    }
+    
+    // Вставляем заголовок
+    targetSheet.insertColumnAfter(insertPos);
+    targetSheet.getRange(1, insertPos + 1).setValue(contentManagerHeader);
+    columnMap[contentManagerHeader] = insertPos;
+    targetLastCol++;
+    
+    console.log('📌 Добавлена колонка "' + contentManagerHeader + '" после "' + managerHeader + '"');
+  }
+  
+  // ========== 2. ДОБАВЛЯЕМ ОСТАЛЬНЫЕ НЕДОСТАЮЩИЕ КОЛОНКИ (в конец) ==========
+  var nextCol = targetLastCol;
+  for (var i = 0; i < sourceHeaders.length; i++) {
+    var header = sourceHeaders[i];
+    // Пропускаем уже обработанный contentManager
+    if (header === contentManagerHeader && columnMap[header] !== -1) continue;
+    
+    if (columnMap[header] === -1) {
+      columnMap[header] = nextCol;
+      targetSheet.getRange(1, nextCol + 1).setValue(header);
+      nextCol++;
+    }
+  }
+  
+  // Если лист был полностью пустой
+  if (nextCol === 0 && sourceHeaders.length > 0) {
+    for (var i = 0; i < sourceHeaders.length; i++) {
+      targetSheet.getRange(1, i + 1).setValue(sourceHeaders[i]);
+      columnMap[sourceHeaders[i]] = i;
+    }
+    nextCol = sourceHeaders.length;
+  }
+  
+  // Жирный шрифт для заголовков
+  if (nextCol > 0) {
+    targetSheet.getRange(1, 1, 1, nextCol).setFontWeight("bold");
+  }
+  
+  // ========== 3. ПОДГОТАВЛИВАЕМ ДАННЫЕ ДЛЯ МАССОВОЙ ЗАПИСИ ==========
+  var outputData = [];
+  for (var row = 0; row < lastRow; row++) {
+    var newRow = new Array(nextCol);
+    for (var i = 0; i < newRow.length; i++) {
+      newRow[i] = "";
+    }
+    outputData.push(newRow);
+  }
+  
+  // Заполняем данные по соответствию колонок
+  for (var col = 0; col < sourceHeaders.length; col++) {
+    var targetCol = columnMap[sourceHeaders[col]];
+    if (targetCol !== -1 && targetCol < nextCol) {
+      for (var row = 0; row < lastRow; row++) {
+        outputData[row][targetCol] = sourceData[row][col];
+      }
+    }
+  }
+  
+  // ========== 4. МАССОВАЯ ЗАПИСЬ ==========
+  if (lastRow > 0 && nextCol > 0) {
+    targetSheet.getRange(1, 1, lastRow, nextCol).setValues(outputData);
+  }
+  
+  // ========== 5. ОБРАБОТКА КОЛОНКИ "НДС на товаре или комплекте" ==========
+  var vatOnProductHeader = "НДС на товаре или комплекте";
+  var vatOnProductCol = columnMap[vatOnProductHeader];
+  
+  if (vatOnProductCol !== -1 && vatOnProductCol < nextCol && lastRow > 1) {
+    var vatRange = targetSheet.getRange(2, vatOnProductCol + 1, lastRow - 1, 1);
+    var vatValues = vatRange.getValues();
+    
+    for (var i = 0; i < vatValues.length; i++) {
+      var val = vatValues[i][0];
+      if (val !== "" && val !== null && typeof val === "string") {
+        var cleanVal = val.replace(/[₽$\s]/g, '').replace(',', '.');
+        var num = parseFloat(cleanVal);
+        if (!isNaN(num)) {
+          vatValues[i][0] = Math.floor(num) === num ? Math.floor(num).toString() : num.toString();
+        }
+      }
+    }
+    vatRange.setValues(vatValues);
+    console.log('✅ Обработана колонка "НДС на товаре или комплекте"');
+  }
+  
+  // Фиксируем первую строку
+  if (targetSheet.getFrozenRows() === 0) {
+    targetSheet.setFrozenRows(1);
+  }
+  
+  console.log('✅ Готово! Скопировано ' + lastRow + ' строк и ' + sourceHeaders.length + ' колонок');
+}
