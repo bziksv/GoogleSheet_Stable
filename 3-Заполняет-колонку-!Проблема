@@ -1,0 +1,80 @@
+/**
+ * 🔹 Заполняет колонку !Проблема ("ДА" если есть пустые обязательные поля)
+ * НЕ меняет цвета, НЕ трогает другие данные
+ */
+function fillProblemColumn() {
+  const CONFIG = {
+    SHEET_NAME: "Габариты",
+    HEADERS_ROW: 1,
+    SPECIAL_VALUES: ["Стандартная упаковка", "Своя упаковка"],
+    COURIER_KEYWORD: "курьерский пакет",
+    HEADERS: {
+      INPUT: "!тип упаковки",
+      LENGTH: "!длина (см)",
+      WIDTH: "!ширина (см)",
+      BOX_HEIGHT: "высота (см) коробка",
+      PACK_HEIGHT: "высота (см) пакет",
+      WEIGHT: "!вес (кг)",
+      PROBLEM: "!Проблема"
+    }
+  };
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
+  if (!sheet) { Logger.log(`❌ Лист "${CONFIG.SHEET_NAME}" не найден`); return; }
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2) { Logger.log("⚠️ Нет данных"); return; }
+
+  const headers = sheet.getRange(CONFIG.HEADERS_ROW, 1, 1, lastCol).getValues()[0];
+  const colMap = {};
+  Object.entries(CONFIG.HEADERS).forEach(([key, name]) => {
+    const target = name.toLowerCase().replace(/\s+/g, " ").trim();
+    headers.forEach((h, i) => {
+      const header = String(h).toLowerCase().replace(/\s+/g, " ").trim();
+      if (header.includes(target)) colMap[key] = i + 1;
+    });
+  });
+
+  if (!colMap.INPUT || !colMap.PROBLEM) { Logger.log("❌ Не найдены колонки"); return; }
+
+  const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const problemValues = [];
+
+  for (let r = 0; r < data.length; r++) {
+    const rawValue = String(data[r][colMap.INPUT - 1] || "").trim();
+    let rowHasProblem = false;
+    let isCourier = false;
+    let isSpecial = false;
+    
+    if (!rawValue) {
+      rowHasProblem = true;
+    } else {
+      isCourier = rawValue.toLowerCase().includes(CONFIG.COURIER_KEYWORD);
+      isSpecial = CONFIG.SPECIAL_VALUES.includes(rawValue);
+    }
+
+    if (isSpecial) {
+      [colMap.LENGTH, colMap.WIDTH, colMap.BOX_HEIGHT, colMap.WEIGHT].forEach(c => {
+        if (c && !String(data[r][c - 1] || "").trim()) rowHasProblem = true;
+      });
+    } else {
+      if (colMap.LENGTH && !String(data[r][colMap.LENGTH - 1] || "").trim()) rowHasProblem = true;
+      if (colMap.WIDTH && !String(data[r][colMap.WIDTH - 1] || "").trim()) rowHasProblem = true;
+      if (isCourier) {
+        if (colMap.PACK_HEIGHT && !String(data[r][colMap.PACK_HEIGHT - 1] || "").trim()) rowHasProblem = true;
+      } else {
+        if (colMap.BOX_HEIGHT && !String(data[r][colMap.BOX_HEIGHT - 1] || "").trim()) rowHasProblem = true;
+      }
+    }
+    if (colMap.WEIGHT && !String(data[r][colMap.WEIGHT - 1] || "").trim()) rowHasProblem = true;
+
+    problemValues.push(rowHasProblem ? ["ДА"] : [""]);
+  }
+
+  if (problemValues.length > 0) {
+    sheet.getRange(2, colMap.PROBLEM, problemValues.length, 1).setValues(problemValues);
+  }
+  Logger.log(`✅ !Проблема: заполнено ${problemValues.filter(v => v[0] === "ДА").length} из ${problemValues.length}`);
+}
