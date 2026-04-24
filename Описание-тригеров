@@ -1,12 +1,23 @@
 /*
-exportMSCards - Выгрузка карточек из МойСклад
-updateMSStocks - Остатки из МойСклад
-exportMSBundlesStructure - Структура комплектов
-calculateBundleStocks - Расчёт остатков комплектов
-exportOzonProducts - Экспорт Ozon
-exportWbCards + updateWbStocks  - Wildberries
-exportYandexMarket - Яндекс Маркет
-runAllExports - Huckster (оба листа)
-updateSummarySheet - Формирование сводки
-sendSummaryToChat - Уведомления в чат
+exportMSCards - Выгрузка карточек из МойСклад                         запуск 00-01
+updateMSStocks - Остатки из МойСклад                                  запуск 01-02
+exportMSBundlesStructure - Структура комплектов                       запуск 02-03
+calculateBundleStocks - Расчёт остатков комплектов                    запуск 03-04
+
+syncDimensionsToSheet-1-Синхронизация-Габаритов-с-Файлом-для-Работы   запуск 04-05
+updateDimensionsData-2-Обновляем-Остаток-на-листе-Габариты            запуск 05-06
+fillProblemColumn-3-Заполняет-колонку-!Проблема                       запуск 05-06
+sortDimensionsSimple-4-Сортировка-Листа-Габариты                      запуск 06-07
+highlightDimensionCells-5-Только подсветка пустых обязательных полей  запуск 07-08
+
+exportOzonProducts - Экспорт Ozon                                     запуск 00-01
+exportWbCards      - Wildberries                                      запуск 00-01
+updateWbStocks     - Wildberries                                      запуск 01-02
+exportYandexMarket - Яндекс Маркет                                    запуск 00-01
+runAllExports - Huckster (оба листа)                                  запуск 00-01
+
+ZapuskPolnoYSinchronizacii_1                                          запуск 03-04
+ZapuskPolnoYSinchronizacii_2                                          запуск 04-05
+updateSummarySheet - Формирование сводки                              запуск 05-06
+sendSummaryToChat - Уведомления в чат                                 запуск 06-07
 */
