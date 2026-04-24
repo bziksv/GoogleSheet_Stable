@@ -144,3 +144,4 @@ function calculateBundleStocks() {
   Logger.log(`   - Обновлено: ${updated}`);
   Logger.log(`   - За ${Math.round(elapsed)} сек.`);
 }
+ 
