@@ -1,0 +1,95 @@
+/**
+ * 🔹 Только подсветка пустых обязательных полей (цвет #fff59d)
+ * ✅ НОВЫЙ ПРИОРИТЕТ: сначала проверяет !Проблема + пустой !Тип УПАКОВКИ
+ */
+function highlightDimensionCells() {
+  const CONFIG = {
+    SHEET_NAME: "Габариты",
+    HEADERS_ROW: 1,
+    HIGHLIGHT_COLOR: "#fff59d",
+    SPECIAL_VALUES: ["Стандартная упаковка", "Своя упаковка"],
+    COURIER_KEYWORD: "курьерский пакет",
+    HEADERS: {
+      INPUT: "!тип упаковки",
+      LENGTH: "!длина (см)",
+      WIDTH: "!ширина (см)",
+      BOX_HEIGHT: "высота (см) коробка",
+      PACK_HEIGHT: "высота (см) пакет",
+      WEIGHT: "!вес (кг)",
+      PROBLEM: "!Проблема"  // ← Добавлено для проверки
+    }
+  };
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
+  if (!sheet) { Logger.log(`❌ Лист "${CONFIG.SHEET_NAME}" не найден`); return; }
+
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 2) { Logger.log("⚠️ Нет данных"); return; }
+
+  const headers = sheet.getRange(CONFIG.HEADERS_ROW, 1, 1, lastCol).getValues()[0];
+  const colMap = {};
+  Object.entries(CONFIG.HEADERS).forEach(([key, name]) => {
+    const target = name.toLowerCase().replace(/\s+/g, " ").trim();
+    headers.forEach((h, i) => {
+      const header = String(h).toLowerCase().replace(/\s+/g, " ").trim();
+      if (header.includes(target)) colMap[key] = i + 1;
+    });
+  });
+
+  if (!colMap.INPUT) { Logger.log("❌ Не найдена колонка '!тип упаковки'"); return; }
+
+  const data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const bgChanges = {};
+
+  for (let r = 0; r < data.length; r++) {
+    const rowIdx = r + 2;
+    const packageVal = String(data[r][colMap.INPUT - 1] || "").trim();
+    const problemVal = colMap.PROBLEM ? String(data[r][colMap.PROBLEM - 1] || "").trim().toUpperCase() : "";
+    const hasProblem = (problemVal === "ДА");
+
+    // Сброс подсветки для всех целевых колонок
+    [colMap.INPUT, colMap.LENGTH, colMap.WIDTH, colMap.BOX_HEIGHT, colMap.PACK_HEIGHT, colMap.WEIGHT]
+      .filter(c => c).forEach(c => { bgChanges[`${rowIdx}_${c}`] = null; });
+
+    // 🔴 ПРИОРИТЕТ 1: Если !Проблема="ДА" и !Тип УПАКОВКИ пустой
+    if (hasProblem && packageVal === "") {
+      [colMap.INPUT, colMap.LENGTH, colMap.WIDTH, colMap.BOX_HEIGHT, colMap.PACK_HEIGHT, colMap.WEIGHT]
+        .filter(c => c).forEach(c => { bgChanges[`${rowIdx}_${c}`] = CONFIG.HIGHLIGHT_COLOR; });
+      continue; // Переходим к следующей строке, остальную логику не трогаем
+    }
+
+    // 🟡 ПРИОРИТЕТ 2: Стандартная логика (если !Тип УПАКОВКИ заполнен)
+    if (packageVal) {
+      const isCourier = packageVal.toLowerCase().includes(CONFIG.COURIER_KEYWORD);
+      const isSpecial = CONFIG.SPECIAL_VALUES.includes(packageVal);
+
+      if (isSpecial) {
+        [colMap.LENGTH, colMap.WIDTH, colMap.BOX_HEIGHT, colMap.WEIGHT].forEach(c => {
+          if (c && !String(data[r][c - 1] || "").trim()) {
+            bgChanges[`${rowIdx}_${c}`] = CONFIG.HIGHLIGHT_COLOR;
+          }
+        });
+      } else {
+        if (colMap.LENGTH && !String(data[r][colMap.LENGTH - 1] || "").trim()) bgChanges[`${rowIdx}_${colMap.LENGTH}`] = CONFIG.HIGHLIGHT_COLOR;
+        if (colMap.WIDTH && !String(data[r][colMap.WIDTH - 1] || "").trim()) bgChanges[`${rowIdx}_${colMap.WIDTH}`] = CONFIG.HIGHLIGHT_COLOR;
+
+        if (isCourier) {
+          if (colMap.PACK_HEIGHT && !String(data[r][colMap.PACK_HEIGHT - 1] || "").trim()) bgChanges[`${rowIdx}_${colMap.PACK_HEIGHT}`] = CONFIG.HIGHLIGHT_COLOR;
+        } else {
+          if (colMap.BOX_HEIGHT && !String(data[r][colMap.BOX_HEIGHT - 1] || "").trim()) bgChanges[`${rowIdx}_${colMap.BOX_HEIGHT}`] = CONFIG.HIGHLIGHT_COLOR;
+        }
+        if (colMap.WEIGHT && !String(data[r][colMap.WEIGHT - 1] || "").trim()) bgChanges[`${rowIdx}_${colMap.WEIGHT}`] = CONFIG.HIGHLIGHT_COLOR;
+      }
+    }
+  }
+
+  // Применяем фоны пакетом
+  Object.entries(bgChanges).forEach(([key, color]) => {
+    const [row, col] = key.split('_').map(Number);
+    sheet.getRange(row, col).setBackground(color);
+  });
+  
+  Logger.log(`✅ Подсветка применена`);
+}
