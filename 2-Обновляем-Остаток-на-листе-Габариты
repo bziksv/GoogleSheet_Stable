@@ -1,0 +1,141 @@
+/**
+ * Обновляет колонки "!Остаток на [дата]" и "!Тип товара" на листе "Габариты"
+ * значениями из листа "MS Export" по совпадению кода.
+ * ✅ ДОБАВЛЕНО: предупреждение, если код не найден в источнике.
+ */
+function updateDimensionsData() {
+  const startTime = new Date();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const dimSheet = ss.getSheetByName("Габариты");
+  const msSheet = ss.getSheetByName("MS Export");
+  
+  if (!dimSheet || !msSheet) {
+    Logger.log("❌ Один из листов не найден ('Габариты' или 'MS Export')");
+    return;
+  }
+  
+  const today = Utilities.formatDate(new Date(), "Europe/Moscow", "dd.MM.yyyy");
+  const stockHeader = "!Остаток на " + today;
+  
+  // ========== 1. НАХОДИМ КОЛОНКИ В "Габариты" ==========
+  const dimHeaders = dimSheet.getRange(1, 1, 1, dimSheet.getLastColumn()).getValues()[0];
+  let codeColDim = -1, stockColDim = -1, typeColDim = -1;
+  
+  for (let i = 0; i < dimHeaders.length; i++) {
+    const h = dimHeaders[i] ? String(dimHeaders[i]).trim() : "";
+    if (h === "!Код") codeColDim = i;
+    if (stockColDim === -1 && h.startsWith("!Остаток на")) stockColDim = i;
+    if (h === "!Тип товара") typeColDim = i;
+  }
+  
+  if (codeColDim === -1) {
+    Logger.log("❌ Колонка '!Код' не найдена в листе 'Габариты'");
+    return;
+  }
+  
+  // Обновляем/создаём колонку остатка
+  if (stockColDim === -1) {
+    stockColDim = dimSheet.getLastColumn();
+    dimSheet.getRange(1, stockColDim + 1).setValue(stockHeader).setFontWeight("bold");
+    Logger.log(`📋 Создана колонка остатка: ${stockHeader}`);
+  } else {
+    dimSheet.getRange(1, stockColDim + 1).setValue(stockHeader);
+    Logger.log(`🔄 Обновлен заголовок остатка: ${stockHeader}`);
+  }
+  
+  if (typeColDim === -1) {
+    Logger.log("⚠️ Колонка '!Тип товара' не найдена, пропускаем обновление типа");
+  }
+  
+  Logger.log(`📍 Габариты: !Код→${codeColDim+1}, !Остаток→${stockColDim+1}, !Тип→${typeColDim+1}`);
+  
+  // ========== 2. НАХОДИМ КОЛОНКИ В "MS Export" ==========
+  const msHeaders = msSheet.getRange(1, 1, 1, msSheet.getLastColumn()).getValues()[0];
+  let codeColMs = -1, stockColMs = -1, typeColMs = -1;
+  
+  for (let i = 0; i < msHeaders.length; i++) {
+    const h = msHeaders[i] ? String(msHeaders[i]).trim() : "";
+    if (h === "Код товара") codeColMs = i;
+    if (stockColMs === -1 && (h === "Остаток" || h === "Остатки" || h.startsWith("Остаток"))) stockColMs = i;
+    if (h === "Тип") typeColMs = i;
+  }
+  
+  if (codeColMs === -1 || stockColMs === -1) {
+    Logger.log(`❌ Не найдены колонки в 'MS Export'! Код: ${codeColMs}, Остаток: ${stockColMs}`);
+    return;
+  }
+  
+  // ========== 3. ЧИТАЕМ ДАННЫЕ ИЗ "MS Export" ПАКЕТОМ ==========
+  const msLastRow = msSheet.getLastRow();
+  if (msLastRow < 2) { Logger.log("⚠️ Лист 'MS Export' пуст"); return; }
+  
+  const msData = msSheet.getRange(2, 1, msLastRow - 1, msSheet.getLastColumn()).getValues();
+  const stockMap = new Map();
+  const typeMap = new Map();
+  
+  for (let i = 0; i < msData.length; i++) {
+    const code = String(msData[i][codeColMs] || "").trim().toUpperCase();
+    if (!code) continue;
+    if (stockColMs !== -1) stockMap.set(code, msData[i][stockColMs]);
+    if (typeColMs !== -1) {
+      const typeVal = msData[i][typeColMs];
+      typeMap.set(code, (typeVal !== null && typeVal !== undefined) ? String(typeVal).trim() : "");
+    }
+  }
+  Logger.log(`🗺️ Загружено: ${stockMap.size} остатков, ${typeMap.size} типов из MS Export`);
+  
+  // ========== 4. ЧИТАЕМ "Габариты" ПАКЕТОМ ==========
+  const dimLastRow = dimSheet.getLastRow();
+  if (dimLastRow < 2) { Logger.log("⚠️ Лист 'Габариты' пуст"); return; }
+  const dimDataRows = dimLastRow - 1;
+  
+  const codesDim = dimSheet.getRange(2, codeColDim + 1, dimDataRows, 1).getValues();
+  const oldStockValues = dimSheet.getRange(2, stockColDim + 1, dimDataRows, 1).getValues();
+  const oldTypeValues = (typeColDim !== -1) ? dimSheet.getRange(2, typeColDim + 1, dimDataRows, 1).getValues() : null;
+  
+  // ========== 5. ОБНОВЛЯЕМ В ПАМЯТИ ==========
+  let stockUpdated = 0, stockNotFound = 0;
+  let typeUpdated = 0, typeNotFound = 0;
+  
+  const warningMsg = "Проверьте товар в МС, возможно он архивный, если да удаляем";
+  
+  // Обновляем остатки
+  const newStockValues = oldStockValues.map((row, i) => {
+    const code = String(codesDim[i][0] || "").trim().toUpperCase();
+    if (!code) return row;
+    
+    if (stockMap.has(code)) {
+      stockUpdated++;
+      return [stockMap.get(code)];
+    }
+    stockNotFound++;
+    return [warningMsg]; // 👈 ПРЕДУПРЕЖДЕНИЕ, ЕСЛИ КОД НЕ НАЙДЕН
+  });
+  
+  // Обновляем тип (если колонка есть)
+  let newTypeValues = null;
+  if (typeColDim !== -1 && oldTypeValues) {
+    newTypeValues = oldTypeValues.map((row, i) => {
+      const code = String(codesDim[i][0] || "").trim().toUpperCase();
+      if (!code) return row;
+      
+      if (typeMap.has(code)) {
+        typeUpdated++;
+        return [typeMap.get(code)];
+      }
+      typeNotFound++;
+      return [warningMsg]; // 👈 ПРЕДУПРЕЖДЕНИЕ, ЕСЛИ КОД НЕ НАЙДЕН
+    });
+  }
+  
+  // ========== 6. ЗАПИСЫВАЕМ ПАКЕТОМ ==========
+  dimSheet.getRange(2, stockColDim + 1, dimDataRows, 1).setValues(newStockValues);
+  dimSheet.getRange(2, stockColDim + 1, dimDataRows, 1).setNumberFormat("0");
+  
+  if (typeColDim !== -1 && newTypeValues) {
+    dimSheet.getRange(2, typeColDim + 1, dimDataRows, 1).setValues(newTypeValues);
+  }
+  
+  const elapsed = ((new Date() - startTime) / 1000).toFixed(2);
+  Logger.log(`✅ Готово! Остатки: ${stockUpdated} обновлено, ${stockNotFound} не найдено | Тип: ${typeUpdated} обновлено, ${typeNotFound} не найдено | За ${elapsed} сек.`);
+}
