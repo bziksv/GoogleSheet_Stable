@@ -1,9 +1,9 @@
 // ==================== НАСТРОЙКИ ====================
 // Вебхук для менеджеров (основной чат)
-const SYNO_WEBHOOK_URL = "https://s.prime-ltd.su/webapi/entry.cgi?api=SYNO.Chat.External&method=incoming&version=2&token=53HbSbHtHIIFM4515xjQReBJhURhhdBPcUyL96K37zYYpAM5GCDITBOF4rpLZsCz";
+const SYNO_WEBHOOK_URL = ""!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";";
 
 // 👇 НОВЫЙ: Вебхук для контент-менеджеров
-const SYNO_WEBHOOK_CONTENT_URL = "https://s.prime-ltd.su/webapi/entry.cgi?api=SYNO.Chat.External&method=incoming&version=2&token=%2233rbvFFubbigAaAeK5u2s4MNRPrk3ixEBcLqLLzG0RkKJZStJXboTWZIN9AjrPN9%22";
+const SYNO_WEBHOOK_CONTENT_URL = "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!";
 
 // ==================== ОТПРАВКА УВЕДОМЛЕНИЯ ====================
 function sendSynoNotification(message, webhookUrl) {
